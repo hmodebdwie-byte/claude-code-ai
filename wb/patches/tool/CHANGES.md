@@ -1,6 +1,15 @@
+# TickTrade Intelligence Core 3.6.1
+
+- A failed Docker command now explains itself in the job panel: exit code, a plain-language cause when it
+  is recognizable (Docker Desktop not running or paused, registry unreachable, Docker Hub rate limit, disk full,
+  permission refused) and the last lines of output. A build that dies instantly no longer leaves an empty
+  "Live build output".
+- When Docker Hub cannot be reached (offline, VPN, proxy), the build retries from the base images Docker
+  already holds instead of failing.
+
 # TickTrade Intelligence Core 3.6.0
 
-Changes since 3.5.0 (the version you were running):
+Changes since 3.5.0:
 
 ## Code ZIP uploads
 - ZIPs made from a working folder now import. Dependency, build and version-control folders

@@ -1,7 +1,7 @@
 From 55b286ce0aae8d99c535419389a29f01dc299341 Mon Sep 17 00:00:00 2001
 From: TickTrade Workbench <workbench@local>
 Date: Sun, 13 Sep 2026 18:00:18 +0000
-Subject: [PATCH 3/7] 3.6.0: show ignored ZIP folders in coverage details;
+Subject: [PATCH 3/8] 3.6.0: show ignored ZIP folders in coverage details;
  align Studio JS tests with the new limits; README
 
 ---

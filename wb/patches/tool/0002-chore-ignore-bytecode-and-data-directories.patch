@@ -1,7 +1,7 @@
 From 16f797eb7a899e1be2ef27e918f5d422bc4224ac Mon Sep 17 00:00:00 2001
 From: TickTrade Workbench <workbench@local>
 Date: Sun, 13 Sep 2026 17:58:18 +0000
-Subject: [PATCH 2/7] chore: ignore bytecode and data directories
+Subject: [PATCH 2/8] chore: ignore bytecode and data directories
 
 ---
  .gitignore                                     |   5 +++++

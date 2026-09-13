@@ -1,7 +1,7 @@
 From b008b8966b00d6ef52eb0b2ade5ba020aec378b2 Mon Sep 17 00:00:00 2001
 From: TickTrade Workbench <workbench@local>
 Date: Sun, 13 Sep 2026 17:57:36 +0000
-Subject: [PATCH 1/7] 3.6.0: tolerant code ZIP uploads, persistent error log,
+Subject: [PATCH 1/8] 3.6.0: tolerant code ZIP uploads, persistent error log,
  larger Studio patch limits, launcher
 
 ---
