@@ -239,5 +239,22 @@
   ],
   "tests": "14/14 in headless Chromium",
   "notes": "Verified in the real app: demo login; BUY opens the trade-confirmation sheet when the Settings toggle is on and Cancel places no stake (c0011); chat send clears the input and drops focus, sender name renders above the message (c0010); admin login reaches /admin with no redirect loop, a USER-role login lands on the 403 page and 'Sign in with another account' clears the session (c0007); Risk Management Terminal and NPC Simulator tabs render. Finding: admin/src/Pages/AdminDashboard/NpcSimulator.css @imports Google Fonts; when fonts.googleapis.com is unreachable (ad-blocker, firewall, offline) the whole /admin lazy chunk fails to preload its CSS and the dashboard shows 'React Application Error'. The smoke tool stubs the font host; the product fix (move the font <link> to index.html or self-host) is proposed, not applied."
+ },
+ {
+  "id": "c0019",
+  "at": "2026-09-13T16:20:00Z",
+  "title": "Admin dashboard no longer fails when Google Fonts is unreachable: Poppins loaded from index.html, not @imported in the lazy /admin CSS",
+  "repo": "admin",
+  "status": "verified",
+  "files": [
+   "index.html",
+   "src/Pages/AdminDashboard/NpcSimulator.css",
+   "src/Pages/KycWebhookTable/index.css",
+   "src/Pages/Notfound/notfound.css",
+   "src/Pages/UnauthorizedPage/UnauthorizedPage.css",
+   "tools/checks/admin-fonts-blocked.cjs"
+  ],
+  "tests": "blocked-font browser check 2/2 · admin regressions 28/28 · Vite build",
+  "notes": "Root cause of the finding in c0018: a failed nested @import marks the route chunk's stylesheet as errored, Vite's CSS preload rejects and the ErrorBoundary replaces the whole dashboard. The font is now a top-level <link> (preconnect + stylesheet) so a blocked font host only falls back to the system font; every Poppins declaration got a real fallback stack. Verified with requests to fonts.googleapis.com aborted (Playwright route.abort): dashboard renders after login; dist CSS contains no googleapis @import. Patch: patches/admin/0004-*.patch."
  }
 ]
