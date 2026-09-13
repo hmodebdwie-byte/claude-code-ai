@@ -1,0 +1,25 @@
+From dce91d3888f2275a459118028a1b66bbc2671408 Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 18:19:42 +0000
+Subject: [PATCH 6/7] tests: lockfiles share the 2 MB per-file limit
+
+---
+ tests/test_studio_controller.cjs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/test_studio_controller.cjs b/tests/test_studio_controller.cjs
+index f69e443..b22b6e8 100644
+--- a/tests/test_studio_controller.cjs
++++ b/tests/test_studio_controller.cjs
+@@ -58,7 +58,7 @@ async function check(name,test){await test();passed++;console.log('PASS',name);}
+   await check('parallel refresh callers share one pending request',async()=>{const s=make();delete s.refresh;let resolve;let calls=0;s.loadData=()=>{calls++;return new Promise(done=>{resolve=done;});};const one=s.refresh(),two=s.refresh();assert.equal(one,two);assert.equal(calls,1);resolve();await one;assert.equal(s.refreshPromise,null);});
+   await check('existing-file targeted edits pass unchanged to the server',()=>{const value=returned();delete value.changes[0].content;value.changes[0].edits=[{old:'existing text',new:'replacement text'}];assert.equal(validate(value,[repo]).changes[0].edits,value.changes[0].edits);});
+   await check('targeted edits reject mixed formats, new files and invalid edit lists',()=>{const value=returned();value.changes[0].edits=[{old:'a',new:'b'}];assert.throws(()=>validate(value,[repo]),/exactly one/);delete value.changes[0].content;value.changes[0].before_sha256=null;assert.throws(()=>validate(value,[repo]),/New files/);value.changes[0].before_sha256=sha;value.changes[0].edits=[];assert.throws(()=>validate(value,[repo]),/targeted edits/);value.changes[0].edits=Array.from({length:21},()=>({old:'a',new:'b'}));assert.throws(()=>validate(value,[repo]),/targeted edits/);value.changes[0].edits=[{old:'',new:'b'}];assert.throws(()=>validate(value,[repo]),/nonempty old/);});
+-  await check('lockfile exception permits bounded 1 MB files without raising source-file limits',()=>{const value=returned();value.changes[0].path='app/package-lock.json';value.changes[0].content='x'.repeat(3000*1024);assert.equal(validate(value,[repo]).changes.length,1);value.changes[0].path='src/package-lock.txt';assert.throws(()=>validate(value,[repo]),/2 MB/);value.changes[0].path='app/package-lock.json';value.changes[0].content='x'.repeat(4*1024*1024+1);assert.throws(()=>validate(value,[repo]),/4 MB/);});
++  await check('lockfiles follow the same 2 MB per-file limit as source files',()=>{const value=returned();value.changes[0].path='app/package-lock.json';value.changes[0].content='x'.repeat(1500*1024);assert.equal(validate(value,[repo]).changes.length,1);value.changes[0].content='x'.repeat(2049*1024);assert.throws(()=>validate(value,[repo]),/2 MB/);value.changes[0].path='src/package-lock.txt';assert.throws(()=>validate(value,[repo]),/2 MB/);});
+   await check('ambiguous edit rejection comes from the server without client replacement guesses',async()=>{const s=make(),value=returned();delete value.changes[0].content;value.changes[0].edits=[{old:'ana',new:'ANA'}];s.slot('returned').value=JSON.stringify(value);let posted;s.api=async(endpoint,body)=>{if(endpoint==='development')return {repositories:[repo]};posted=body;throw new Error('Targeted edit old text must occur exactly once in the current file text.');};await s.importReturned();assert.equal(posted.changes[0].edits[0].old,'ana');assert.match(s.slot('error').textContent,/exactly once/);assert.equal(s.selected.has('cand-returned'),false);});
+   await check('failed full-brief persistence prevents launching incomplete research',async()=>{const s=make();s.draft().brief='A complete owner task';s.draft().criteria='Specific criteria';s.saveFullBrief=async()=>{throw new Error('Brief storage unavailable');};let calls=0;s.options.onResearch=()=>calls++;await s.research();assert.equal(calls,0);assert.match(s.slot('error').textContent,/Brief storage unavailable/);});
+   await check('full-brief upload includes complete owner intent and captured file manifest',async()=>{const s=make();delete s.saveFullBrief;s.draft().brief='界'.repeat(4000);s.draft().criteria='ق'.repeat(2500);let stored,request;s.readFile=async(blob,base64)=>{assert.equal(base64,true);stored=await blob.text();return 'encoded-full-brief';};s.api=async(endpoint,body)=>{request={endpoint,body};return {source_id:'saved-full-brief',title:'Owner brief'};};const result=await s.saveFullBrief('patch_proposal');assert.equal(result.source_id,'saved-full-brief');assert.ok(stored.includes(s.draft().brief));assert.ok(stored.includes(s.draft().criteria));assert.ok(stored.includes(sha));assert.equal(request.endpoint,'features/brief');assert.equal(request.body.data,'encoded-full-brief');});
+-- 
+2.43.0
+

@@ -256,5 +256,19 @@
   ],
   "tests": "blocked-font browser check 2/2 · admin regressions 28/28 · Vite build",
   "notes": "Root cause of the finding in c0018: a failed nested @import marks the route chunk's stylesheet as errored, Vite's CSS preload rejects and the ErrorBoundary replaces the whole dashboard. The font is now a top-level <link> (preconnect + stylesheet) so a blocked font host only falls back to the system font; every Poppins declaration got a real fallback stack. Verified with requests to fonts.googleapis.com aborted (Playwright route.abort): dashboard renders after login; dist CSS contains no googleapis @import. Patch: patches/admin/0004-*.patch."
+ },
+ {
+  "id": "c0020",
+  "at": "2026-09-13T18:40:00Z",
+  "title": "TickTrade Intelligence Core 3.6.0: code ZIP uploads from working folders and Finder exports, persistent error log, larger Studio patch limits, 21 review fixes",
+  "repo": "tool",
+  "status": "verified",
+  "files": [
+   "patches/tool/*.patch",
+   "patches/tool/CHANGES-3.6.0.md",
+   "patches/tool/UPGRADE-3.6.0.md"
+  ],
+  "tests": "python 562/562 · node 13/13 · API + browser upload checks",
+  "notes": "The owner's local AI tool (Python, stdlib) was uploaded as source. Reproduced its ZIP-upload failure: a ZIP that still holds node_modules (or Finder metadata) failed with 'invalid or has too many entries'. Dependency, build, VCS and Finder folders are now ignored before limits apply, on both the baseline importer and the Studio working-version extractor, with precise messages. Every swallowed exception now lands in data/logs/errors.log with the error type in the message. Four parallel code reviews (runtime/Docker, Studio/lab, imports/knowledge, models/engineering) produced 29 findings; 21 fixed with tests, 8 documented as known. Delivered as TickTrade-Intelligence-Core-3.6.0.zip with upgrade notes."
  }
 ]

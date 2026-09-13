@@ -1,0 +1,80 @@
+From 55b286ce0aae8d99c535419389a29f01dc299341 Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 18:00:18 +0000
+Subject: [PATCH 3/7] 3.6.0: show ignored ZIP folders in coverage details;
+ align Studio JS tests with the new limits; README
+
+---
+ README.md                        | 2 +-
+ core/github_projects.py          | 3 ++-
+ tests/test_studio_controller.cjs | 4 ++--
+ web/github.js                    | 4 +++-
+ 4 files changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/README.md b/README.md
+index 7503c9f..a053541 100644
+--- a/README.md
++++ b/README.md
+@@ -120,7 +120,7 @@ Model package sizes were checked against the official [Qwen3 8B](https://ollama.
+ 
+ ## Connected code: ZIP now, GitHub refresh later
+ 
+-Open **GitHub repositories**. Backend, Admin and Frontend each have a captured snapshot and **Upload replacement ZIP** control. No GitHub token is needed to use the uploaded code.
++Open **GitHub repositories**. Backend, Admin and Frontend each have a captured snapshot and **Upload replacement ZIP** control. No GitHub token is needed to use the uploaded code. A ZIP made from a working folder is fine: dependency, build and version-control folders (`node_modules`, `dist`, `build`, `.git`) and Finder metadata (`__MACOSX`, `.DS_Store`) are ignored before the size limits apply, and the coverage details list what was ignored. The ZIP itself must stay under 80 MB and hold at most 20,000 source files.
+ 
+ The table below records the September 12 **imported baseline before local Studio fixes**. Studio shows the current working revisions and their later changes.
+ 
+diff --git a/core/github_projects.py b/core/github_projects.py
+index fe3ff33..80e9ad2 100644
+--- a/core/github_projects.py
++++ b/core/github_projects.py
+@@ -212,7 +212,8 @@ class GitHubProjects:
+             result['report'] = {key:report.get(key) for key in ('files_count','symbols_count','knowledge_sources_indexed','truncated','notes','knowledge_truncated_sources','knowledge_document_char_limit')}
+             excluded=report.get('snapshot_excluded',{})
+             result['report'].update(snapshot_excluded_count=sum(excluded.values()) if isinstance(excluded,dict) else len(excluded),
+-                                    archive_excluded_count=report.get('archive_capture',{}).get('excluded_count',0))
++                                    archive_excluded_count=report.get('archive_capture',{}).get('excluded_count',0),
++                                    archive_capture={'ignored_folders':report.get('archive_capture',{}).get('ignored_folders',{})})
+         return result
+ 
+     def list(self):
+diff --git a/tests/test_studio_controller.cjs b/tests/test_studio_controller.cjs
+index c28689c..f69e443 100644
+--- a/tests/test_studio_controller.cjs
++++ b/tests/test_studio_controller.cjs
+@@ -41,7 +41,7 @@ async function check(name,test){await test();passed++;console.log('PASS',name);}
+   await check('older snapshots and unknown repositories cannot be retargeted',()=>{const value=returned();value.snapshot_id='snap-old';assert.throws(()=>validate(value,[repo]),/older snapshot/);value.repository_id='other';assert.throws(()=>validate(value,[repo]),/older snapshot/);});
+   await check('returned paths reject traversal, absolute paths, controls and duplicates',()=>{for(const invalid of ['../secret','/absolute','src/../secret','src\\secret','src//a','src/\0bad']){const value=returned();value.changes[0].path=invalid;assert.throws(()=>validate(value,[repo]),/relative paths/);}const value=returned();value.changes.push({...value.changes[0]});assert.throws(()=>validate(value,[repo]),/distinct/);});
+   await check('hashes must be strings and extra instructions are not executable fields',()=>{const value=returned();value.changes[0].before_sha256=[sha];assert.throws(()=>validate(value,[repo]),/before_sha256/);const bad=returned();bad.shell='run something';assert.throws(()=>validate(bad,[repo]),/only repository_id/);});
+-  await check('limits count UTF-8 bytes and total file content',()=>{const value=returned();value.changes[0].content='界'.repeat(70000);assert.throws(()=>validate(value,[repo]),/200 KB/);value.changes=Array.from({length:6},(_,i)=>({path:'src/f'+i,before_sha256:null,content:'x'.repeat(190*1024)}));assert.throws(()=>validate(value,[repo]),/1 MB/);value.changes=Array.from({length:21},(_,i)=>({path:'src/f'+i,before_sha256:null,content:'x'}));assert.throws(()=>validate(value,[repo]),/20/);});
++  await check('limits count UTF-8 bytes and total file content',()=>{const value=returned();value.changes[0].content='界'.repeat(700000);assert.throws(()=>validate(value,[repo]),/2 MB/);value.changes=Array.from({length:6},(_,i)=>({path:'src/f'+i,before_sha256:null,content:'x'.repeat(700*1024)}));assert.throws(()=>validate(value,[repo]),/4 MB/);value.changes=Array.from({length:21},(_,i)=>({path:'src/f'+i,before_sha256:null,content:'x'}));assert.throws(()=>validate(value,[repo]),/20/);});
+   await check('preview matches selected candidates and current repository snapshot',()=>{const s=make();assert.equal(s.reviewStillCurrent(),true);s.development.repositories[0].snapshot_id='snap-new';assert.equal(s.reviewStillCurrent(),false);});
+   await check('selection changes or an unexpected preview candidate invalidate review',()=>{const s=make();s.selected.add('cand-other');assert.equal(s.reviewStillCurrent(),false);s.selected.delete('cand-other');s.review.projects[0].candidate_ids=['cand-other'];assert.equal(s.reviewStillCurrent(),false);});
+   await check('Apply cannot run until the exact diff is acknowledged',async()=>{const s=make();let calls=0;s.api=async()=>{calls++;};await s.apply();assert.equal(calls,0);s.$('[data-studio-reviewed]').checked=true;s.review.projects[0].before.snapshot_id='snap-stale';await s.apply();assert.equal(calls,0);});
+@@ -58,7 +58,7 @@ async function check(name,test){await test();passed++;console.log('PASS',name);}
+   await check('parallel refresh callers share one pending request',async()=>{const s=make();delete s.refresh;let resolve;let calls=0;s.loadData=()=>{calls++;return new Promise(done=>{resolve=done;});};const one=s.refresh(),two=s.refresh();assert.equal(one,two);assert.equal(calls,1);resolve();await one;assert.equal(s.refreshPromise,null);});
+   await check('existing-file targeted edits pass unchanged to the server',()=>{const value=returned();delete value.changes[0].content;value.changes[0].edits=[{old:'existing text',new:'replacement text'}];assert.equal(validate(value,[repo]).changes[0].edits,value.changes[0].edits);});
+   await check('targeted edits reject mixed formats, new files and invalid edit lists',()=>{const value=returned();value.changes[0].edits=[{old:'a',new:'b'}];assert.throws(()=>validate(value,[repo]),/exactly one/);delete value.changes[0].content;value.changes[0].before_sha256=null;assert.throws(()=>validate(value,[repo]),/New files/);value.changes[0].before_sha256=sha;value.changes[0].edits=[];assert.throws(()=>validate(value,[repo]),/targeted edits/);value.changes[0].edits=Array.from({length:21},()=>({old:'a',new:'b'}));assert.throws(()=>validate(value,[repo]),/targeted edits/);value.changes[0].edits=[{old:'',new:'b'}];assert.throws(()=>validate(value,[repo]),/nonempty old/);});
+-  await check('lockfile exception permits bounded 1 MB files without raising source-file limits',()=>{const value=returned();value.changes[0].path='app/package-lock.json';value.changes[0].content='x'.repeat(300*1024);assert.equal(validate(value,[repo]).changes.length,1);value.changes[0].path='src/package-lock.txt';assert.throws(()=>validate(value,[repo]),/200 KB/);value.changes[0].path='app/package-lock.json';value.changes[0].content='x'.repeat(1024*1024+1);assert.throws(()=>validate(value,[repo]),/1 MB/);});
++  await check('lockfile exception permits bounded 1 MB files without raising source-file limits',()=>{const value=returned();value.changes[0].path='app/package-lock.json';value.changes[0].content='x'.repeat(3000*1024);assert.equal(validate(value,[repo]).changes.length,1);value.changes[0].path='src/package-lock.txt';assert.throws(()=>validate(value,[repo]),/2 MB/);value.changes[0].path='app/package-lock.json';value.changes[0].content='x'.repeat(4*1024*1024+1);assert.throws(()=>validate(value,[repo]),/4 MB/);});
+   await check('ambiguous edit rejection comes from the server without client replacement guesses',async()=>{const s=make(),value=returned();delete value.changes[0].content;value.changes[0].edits=[{old:'ana',new:'ANA'}];s.slot('returned').value=JSON.stringify(value);let posted;s.api=async(endpoint,body)=>{if(endpoint==='development')return {repositories:[repo]};posted=body;throw new Error('Targeted edit old text must occur exactly once in the current file text.');};await s.importReturned();assert.equal(posted.changes[0].edits[0].old,'ana');assert.match(s.slot('error').textContent,/exactly once/);assert.equal(s.selected.has('cand-returned'),false);});
+   await check('failed full-brief persistence prevents launching incomplete research',async()=>{const s=make();s.draft().brief='A complete owner task';s.draft().criteria='Specific criteria';s.saveFullBrief=async()=>{throw new Error('Brief storage unavailable');};let calls=0;s.options.onResearch=()=>calls++;await s.research();assert.equal(calls,0);assert.match(s.slot('error').textContent,/Brief storage unavailable/);});
+   await check('full-brief upload includes complete owner intent and captured file manifest',async()=>{const s=make();delete s.saveFullBrief;s.draft().brief='界'.repeat(4000);s.draft().criteria='ق'.repeat(2500);let stored,request;s.readFile=async(blob,base64)=>{assert.equal(base64,true);stored=await blob.text();return 'encoded-full-brief';};s.api=async(endpoint,body)=>{request={endpoint,body};return {source_id:'saved-full-brief',title:'Owner brief'};};const result=await s.saveFullBrief('patch_proposal');assert.equal(result.source_id,'saved-full-brief');assert.ok(stored.includes(s.draft().brief));assert.ok(stored.includes(s.draft().criteria));assert.ok(stored.includes(sha));assert.equal(request.endpoint,'features/brief');assert.equal(request.body.data,'encoded-full-brief');});
+diff --git a/web/github.js b/web/github.js
+index 92393c0..37ca63e 100644
+--- a/web/github.js
++++ b/web/github.js
+@@ -164,7 +164,9 @@
+       const archiveExcluded = report.archive_excluded_count ?? report.archive_capture?.excluded_count;
+       const total = value => value == null ? 'Not reported' : number(value);
+       const notes = list(report.notes);
+-      return `<details class="gh-history" data-gh-coverage="${esc(repository.id)}" ${this.coverageOpen.has(repository.id) ? 'open' : ''}><summary>Coverage details <span>${report.truncated ? 'Capture limits reached' : 'Recorded scope'}</span></summary><div class="gh-repository-metrics"><div><strong>${total(shortened)}</strong><span>shortened knowledge excerpts</span></div><div><strong>${total(snapshotExcluded)}</strong><span>snapshot exclusions</span></div><div><strong>${total(archiveExcluded)}</strong><span>archive exclusions</span></div></div><p class="gh-small">${report.knowledge_document_char_limit != null ? `Knowledge excerpts are limited to the first ${number(report.knowledge_document_char_limit)} redacted characters per eligible source. ` : ''}Complete eligible files are retained in the recorded snapshot for Engineering file-reading tools. Excluded source or asset paths are outside that snapshot; unsupported assets may remain only in the original ZIP.</p>${report.truncated ? '<p class="gh-small">One or more capture or excerpt limits were reached. This report does not represent every file or every part of the project.</p>' : ''}${notes.length ? `<div class="gh-history-list">${notes.slice(0,12).map(note => `<div><p>${esc(typeof note === 'string' ? note : JSON.stringify(note))}</p></div>`).join('')}</div>${notes.length > 12 ? `<p class="gh-small">Showing 12 of ${number(notes.length)} scope notes.</p>` : ''}` : ''}</details>`;
++      const ignored = Object.entries(report.archive_capture?.ignored_folders || {});
++      const ignoredLine = ignored.length ? `<p class="gh-small">Ignored in the uploaded ZIP (never source): ${esc(ignored.map(([name, count]) => `${name} (${number(count)} file${count === 1 ? '' : 's'})`).join(' · '))}.</p>` : '';
++      return `<details class="gh-history" data-gh-coverage="${esc(repository.id)}" ${this.coverageOpen.has(repository.id) ? 'open' : ''}><summary>Coverage details <span>${report.truncated ? 'Capture limits reached' : 'Recorded scope'}</span></summary><div class="gh-repository-metrics"><div><strong>${total(shortened)}</strong><span>shortened knowledge excerpts</span></div><div><strong>${total(snapshotExcluded)}</strong><span>snapshot exclusions</span></div><div><strong>${total(archiveExcluded)}</strong><span>archive exclusions</span></div></div>${ignoredLine}<p class="gh-small">${report.knowledge_document_char_limit != null ? `Knowledge excerpts are limited to the first ${number(report.knowledge_document_char_limit)} redacted characters per eligible source. ` : ''}Complete eligible files are retained in the recorded snapshot for Engineering file-reading tools. Excluded source or asset paths are outside that snapshot; unsupported assets may remain only in the original ZIP.</p>${report.truncated ? '<p class="gh-small">One or more capture or excerpt limits were reached. This report does not represent every file or every part of the project.</p>' : ''}${notes.length ? `<div class="gh-history-list">${notes.slice(0,12).map(note => `<div><p>${esc(typeof note === 'string' ? note : JSON.stringify(note))}</p></div>`).join('')}</div>${notes.length > 12 ? `<p class="gh-small">Showing 12 of ${number(notes.length)} scope notes.</p>` : ''}` : ''}</details>`;
+     }
+     repositoryCard(repository) {
+       const link = repositoryUrl(repository.full_name);
+-- 
+2.43.0
+
