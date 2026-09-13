@@ -307,5 +307,30 @@
     ],
     "tests": "esbuild syntax · vite build · workbench browser smoke 30/30 (live round with one real trader, lock at T−3000 ms, LOCKED buttons, ROUND_LOCKED, audit invariants, admin form round-trip)",
     "notes": "battleLocked → matchStore.roundLock → buttons show LOCKED and are disabled until the next round; snapshot locked/trader_count reach the store; ROUND_LOCKED / BATTLE_FROZEN / ORDER_FREEZE / LAST_SECOND_SNIPE_LOCK / throttle / insufficient balance are shown as toasts."
+  },
+  {
+    "id": "c0024",
+    "at": "2026-09-13T23:49:00Z",
+    "repo": "backend",
+    "status": "verified",
+    "title": "Market Sensitivity: exact real-trade moves, correct audit snapshot, complete live trade log, instant config push",
+    "files": [
+      "patches/backend/0006-*.patch",
+      "docs/market-sensitivity-review.md"
+    ],
+    "tests": "price-impact-deterministic.spec 8/8 · shared 219/222 · engine 82/95 (all remaining failures pre-existing) · tsc api/engine/npc-worker/settlement-worker · workbench: NPC-off trades exact at $10–$100k, push applied within 300 ms, NPC-on log separates the exact real move from NPC ticks, settlement snapshot correct",
+    "notes": "The developer's 16.6-pip reading was NPC ticks inside the measurement window; the formula is exact. Real bugs fixed: enforceImmediateDirectionalMove still applied a price-scaled hidden step to real trades whose formula move rounded to zero (up to ~1 pip); the settlement worker snapshotted default config (log/5/1) into the Price Movement Audit; the Live Trade Log missed trades dropped by the 200 ms price-tick coalescer and summed only 50 rows; saves took up to 5 s to reach the engine; audit MULTIPLIER column showed the event multiplier; replay price rounded to cents."
+  },
+  {
+    "id": "c0025",
+    "at": "2026-09-13T23:49:00Z",
+    "repo": "admin",
+    "status": "verified",
+    "title": "Market Sensitivity page: engine-exact preview, editable reference fields, formula-vs-actual live log, server-side history filters; audit page pass/fail + summary",
+    "files": [
+      "patches/admin/0006-*.patch"
+    ],
+    "tests": "eslint clean on the rewritten page · vite build · browser checks 20/20 (config seeding, both previews, quote-tick floor note, save round-trip pushed to engine, override toggle, live log columns, field/search filters, audit summary and multiplier, replay 5-decimal price)",
+    "notes": "Date Range filter did nothing and search/field filtered only the current page; Reference Amount/Pips were not editable; the audit list contained only failures so Pass Rate was meaningless."
   }
 ]

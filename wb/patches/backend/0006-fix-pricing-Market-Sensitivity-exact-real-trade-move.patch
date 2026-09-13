@@ -1,0 +1,1927 @@
+From 22f8d9114f31adcbb904dab0d3610219558f666a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 13 Sep 2026 23:45:53 +0000
+Subject: [PATCH] =?UTF-8?q?fix(pricing):=20Market=20Sensitivity=20?=
+ =?UTF-8?q?=E2=80=94=20exact=20real-trade=20moves,=20correct=20audit=20sna?=
+ =?UTF-8?q?pshot,=20complete=20trade=20log?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Real-user price impact is the admin formula and nothing else:
+
+* shared/price-from-imbalance: computeDeterministicPips / previewDeterministicPriceImpact
+  are the single shared function behind the engine, the admin preview endpoint and the
+  Live Trade Log. A formula move below one quote tick (0.00001 = 0.1 pip) now registers
+  as exactly one tick in the trade's direction — flat, price-level independent.
+* engine/market-state: the post-clamp directional nudge (enforceImmediateDirectionalMove,
+  sized with the price-scaled pip) no longer runs for real trades; it stayed active after
+  the deterministic path was introduced and moved small real orders by up to ~1 pip
+  depending on book skew and price level, which the admin preview never showed. The
+  replay applies the same rule so audit and live pricing agree. Each tick reports the
+  realised move on the 5-decimal quote.
+* settlement: the Price Movement Audit snapshot was taken with getPipImpactConfig() in the
+  settlement-worker process, which never loads the live config, so every queued
+  settlement stored the compiled-in defaults (log / 5 / 1) and a wrong expected end
+  price. The engine leader now records the config the round really used (including a
+  per-round override) when the round closes; settlement reads that record, falls back
+  to the durable Redis config, and uses the configured freeze seconds.
+* engine: admin saves are pushed on engine:events:market.sensitivity.v1 and applied
+  immediately (pollers remain the fallback). New engine:events:trade.priced.v1 carries
+  one attribution row per priced trade, never coalesced, so the Live Trade Log sees every
+  trade; the API persists it independently of the price-tick persistence flag.
+* api: GET /admin/market-sensitivity/preview (engine-exact preview with live price and
+  effective sensitivity); live trade log totals measured on the price path (start → now)
+  with real / NPC / other split, formula vs actual per real row, sensitivity in force;
+  change-log search / field / date filters server-side; audit list returns every settled
+  round with PASS/FAIL, window summary and the Market Sensitivity multiplier (the column
+  used to show the round's event multiplier); replay expected end price keeps 5 decimals.
+
+Tests: price-impact-deterministic.spec (8) — exact 16.0 pips for the reported $100k case,
+price-level independence, round-state independence, quote-tick floor, curves, replay
+parity; shared 219/222 and engine 82/95 (all remaining failures pre-existing, untouched);
+workbench: NPC-off trades exact at every size, push applied before a trade 300 ms after
+save, NPC-on log separating the exact real move from NPC ticks, settlement snapshot
+correct, admin page checks 20/20.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Dzk243ADEkJuWxdHGG3hNv
+---
+ apps/api/src/admin/admin.controller.ts        |  39 +-
+ .../src/admin/market-sensitivity.service.ts   | 817 +++++++++++-------
+ .../src/admin/price-movement-audit.service.ts |  58 +-
+ apps/api/src/redis/redis.subscriber.ts        |  40 +-
+ .../src/battle/battle-engine.service.ts       |  38 +
+ .../src/battle/battle-events.publisher.ts     |   7 +-
+ .../src/battle/battle-settlement.service.ts   |  65 +-
+ .../src/events/trade-executed.handler.ts      |  26 +-
+ apps/engine/src/index.ts                      |  30 +-
+ .../engine/src/market/market-state.service.ts |  23 +-
+ .../shared/src/battle/price-audit-replay.ts   |  13 +-
+ .../shared/src/battle/price-from-imbalance.ts | 108 ++-
+ .../battle/price-impact-deterministic.spec.ts |  98 +++
+ packages/shared/src/events/index.ts           |   1 +
+ .../src/events/pip-impact-config.redis.ts     |  58 ++
+ packages/shared/src/events/trade-priced.v1.ts |  27 +
+ packages/shared/src/index.ts                  |   9 +-
+ 17 files changed, 1091 insertions(+), 366 deletions(-)
+ create mode 100644 packages/shared/src/battle/price-impact-deterministic.spec.ts
+ create mode 100644 packages/shared/src/events/trade-priced.v1.ts
+
+diff --git a/apps/api/src/admin/admin.controller.ts b/apps/api/src/admin/admin.controller.ts
+index 1074b38..5d29f48 100644
+--- a/apps/api/src/admin/admin.controller.ts
++++ b/apps/api/src/admin/admin.controller.ts
+@@ -334,18 +334,53 @@ export class AdminController {
+         return this.marketSensitivityService.setRoundOverride(dto, req.user.userId);
+     }
+ 
++    @Get('market-sensitivity/preview')
++    @ApiOperation({
++        summary: 'Exact price move a real-user trade of this size executes right now',
++        description:
++            'Runs the engine\'s own deterministic pricing function with the saved config, the effective ' +
++            'sensitivity (per-round override when active) and the live price: formula pips, the move the ' +
++            '5-decimal quote actually shows (one-quote-tick floor), price before/after.',
++    })
++    @ApiQuery({ name: 'amount', required: true })
++    @ApiQuery({ name: 'side', required: false, enum: ['BUY', 'SELL'] })
++    @ApiQuery({ name: 'price', required: false, description: 'Price to apply the move to; defaults to the live price' })
++    @RequirePermission('marketSensitivity.view')
++    getMarketSensitivityPreview(
++        @Query('amount') amount?: string,
++        @Query('side') side?: string,
++        @Query('price') price?: string,
++    ) {
++        return this.marketSensitivityService.preview({ amount, side, price });
++    }
++
+     @Get('market-sensitivity/change-log')
+     @ApiOperation({
+-        summary: 'Market Sensitivity change history (paginated)',
++        summary: 'Market Sensitivity change history (paginated, filterable)',
+         description: 'Audit trail of every SENSITIVITY / MULTIPLIER / PER-ROUND OVERRIDE / reference-amount / pips / curve change.',
+     })
+     @ApiQuery({ name: 'page', required: false })
+     @ApiQuery({ name: 'limit', required: false })
++    @ApiQuery({ name: 'search', required: false, description: 'Log id, admin name / e-mail, field or value' })
++    @ApiQuery({ name: 'field', required: false, description: 'SENSITIVITY | MULTIPLIER | OVERRIDE | CURVE | REFERENCE' })
++    @ApiQuery({ name: 'from', required: false, description: 'ISO date/time (inclusive)' })
++    @ApiQuery({ name: 'to', required: false, description: 'ISO date/time (inclusive)' })
+     @RequirePermission('marketSensitivity.view')
+-    getMarketSensitivityChangeLog(@Query('page') page?: string, @Query('limit') limit?: string) {
++    getMarketSensitivityChangeLog(
++        @Query('page') page?: string,
++        @Query('limit') limit?: string,
++        @Query('search') search?: string,
++        @Query('field') field?: string,
++        @Query('from') from?: string,
++        @Query('to') to?: string,
++    ) {
+         return this.marketSensitivityService.getChangeLog({
+             page: page ? Number(page) : undefined,
+             limit: limit ? Number(limit) : undefined,
++            search,
++            field,
++            from,
++            to,
+         });
+     }
+ 
+diff --git a/apps/api/src/admin/market-sensitivity.service.ts b/apps/api/src/admin/market-sensitivity.service.ts
+index ad6bab2..46476ab 100644
+--- a/apps/api/src/admin/market-sensitivity.service.ts
++++ b/apps/api/src/admin/market-sensitivity.service.ts
+@@ -1,304 +1,513 @@
+-import { BadRequestException, Injectable } from '@nestjs/common';
+-import {
+-    DEFAULT_PIP_IMPACT_CONFIG,
+-    DEFAULT_PIP_IMPACT_ROUND_OVERRIDE,
+-    invalidatePipImpactConfigCache,
+-    invalidatePipImpactRoundOverrideCache,
+-    readPipImpactConfigFromRedisOrDefault,
+-    readPipImpactRoundOverrideFromRedisOrDefault,
+-    writePipImpactConfigToRedis,
+-    writePipImpactRoundOverrideToRedis,
+-    clearPipImpactRoundOverrideInRedis,
+-    type PipImpactConfigValue,
+-    type PipImpactRoundOverrideValue,
+-} from '@ticktrade/shared';
+-import { RedisPublisher } from '../redis/redis.publisher';
+-import { PrismaService } from '../prisma/prisma.service';
+-import { AdminAuditLogService } from './audit-log/admin-audit-log.service';
+-
+-const CHANGE_LOG_PAGE_SIZE_DEFAULT = 20;
+-const CHANGE_LOG_PAGE_SIZE_MAX = 100;
+-
+-/**
+- * Admin-facing read/write for Market Sensitivity (PipImpactConfig) — the
+- * live price-impact-per-trade-size curve used by the trading engine.
+- * Redis is the durable store and the only channel this API process shares
+- * with the separate engine process; the engine polls the same key on an
+- * interval (see apps/engine/src/battle/price-from-imbalance.ts).
+- */
+-@Injectable()
+-export class MarketSensitivityService {
+-    constructor(
+-        private readonly redisPublisher: RedisPublisher,
+-        private readonly prisma: PrismaService,
+-        private readonly auditLog: AdminAuditLogService,
+-    ) {}
+-
+-    async getConfig(): Promise<{ success: true; data: PipImpactConfigValue }> {
+-        const data = await readPipImpactConfigFromRedisOrDefault((key) => this.redisPublisher.get(key));
+-        return { success: true, data };
+-    }
+-
+-    async getRoundOverride(): Promise<{ success: true; data: PipImpactRoundOverrideValue }> {
+-        const data = await readPipImpactRoundOverrideFromRedisOrDefault((key) => this.redisPublisher.get(key));
+-        return { success: true, data };
+-    }
+-
+-    async updateConfig(
+-        input: {
+-            referenceAmount?: number;
+-            referencePips?: number;
+-            curve?: 'linear' | 'sqrt' | 'log';
+-            sensitivity?: number;
+-            multiplier?: number;
+-        },
+-        adminId: number,
+-    ) {
+-        const current = await readPipImpactConfigFromRedisOrDefault((key) => this.redisPublisher.get(key));
+-        const next: PipImpactConfigValue = {
+-            referenceAmount: input.referenceAmount ?? current.referenceAmount,
+-            referencePips: input.referencePips ?? current.referencePips,
+-            curve: input.curve ?? current.curve ?? DEFAULT_PIP_IMPACT_CONFIG.curve,
+-            sensitivity: input.sensitivity ?? current.sensitivity ?? DEFAULT_PIP_IMPACT_CONFIG.sensitivity,
+-            multiplier: input.multiplier ?? current.multiplier ?? DEFAULT_PIP_IMPACT_CONFIG.multiplier,
+-        };
+-
+-        if (!Number.isFinite(next.referenceAmount) || next.referenceAmount <= 0) {
+-            throw new BadRequestException('referenceAmount must be a positive number');
+-        }
+-        if (!Number.isFinite(next.referencePips) || next.referencePips < 0) {
+-            throw new BadRequestException('referencePips must be a non-negative number');
+-        }
+-        if (!Number.isInteger(next.sensitivity) || next.sensitivity < 1 || next.sensitivity > 10) {
+-            throw new BadRequestException('sensitivity must be a whole number between 1 and 10');
+-        }
+-        if (!Number.isFinite(next.multiplier) || next.multiplier <= 0) {
+-            throw new BadRequestException('multiplier must be a positive number');
+-        }
+-
+-        const changedFields: Array<{ field: string; oldValue: string; newValue: string }> = [];
+-        const trackChange = (field: string, oldVal: unknown, newVal: unknown) => {
+-            if (String(oldVal) !== String(newVal)) {
+-                changedFields.push({ field, oldValue: String(oldVal), newValue: String(newVal) });
+-            }
+-        };
+-        trackChange('SENSITIVITY', current.sensitivity, next.sensitivity);
+-        trackChange('MULTIPLIER', current.multiplier, next.multiplier);
+-        trackChange('REFERENCE_AMOUNT', current.referenceAmount, next.referenceAmount);
+-        trackChange('REFERENCE_PIPS', current.referencePips, next.referencePips);
+-        trackChange('CURVE', current.curve, next.curve);
+-
+-        await writePipImpactConfigToRedis((key, value) => this.redisPublisher.set(key, value), next);
+-        // This process (API) never calls getPipImpactConfig itself, but drop
+-        // the cache anyway in case anything in-process ever reads it —
+-        // costs nothing, and the engine's own poller picks up the Redis
+-        // write independently within its interval.
+-        invalidatePipImpactConfigCache();
+-
+-        if (changedFields.length) {
+-            await this.prisma.marketSensitivityChangeLog.createMany({
+-                data: changedFields.map((c) => ({ adminId, ...c })),
+-            });
+-            await this.auditLog.log({
+-                adminId,
+-                action: 'systemSetting.marketSensitivityUpdated',
+-                before: current as unknown as Record<string, unknown>,
+-                after: next as unknown as Record<string, unknown>,
+-            });
+-        }
+-
+-        return { success: true, data: next };
+-    }
+-
+-    async setRoundOverride(input: { enabled: boolean; sensitivity?: number }, adminId: number) {
+-        const previous = await readPipImpactRoundOverrideFromRedisOrDefault((key) => this.redisPublisher.get(key));
+-
+-        if (!input.enabled) {
+-            await clearPipImpactRoundOverrideInRedis((key) => this.redisPublisher.del(key));
+-            invalidatePipImpactRoundOverrideCache();
+-            if (previous.enabled) {
+-                await this.prisma.marketSensitivityChangeLog.create({
+-                    data: {
+-                        adminId,
+-                        field: 'PER-ROUND OVERRIDE',
+-                        oldValue: `ON (${previous.sensitivity})`,
+-                        newValue: 'OFF',
+-                    },
+-                });
+-                await this.auditLog.log({
+-                    adminId,
+-                    action: 'systemSetting.marketSensitivityRoundOverrideSet',
+-                    before: { enabled: previous.enabled, sensitivity: previous.sensitivity },
+-                    after: { enabled: false },
+-                });
+-            }
+-            return { success: true, data: DEFAULT_PIP_IMPACT_ROUND_OVERRIDE };
+-        }
+-
+-        const sensitivity = input.sensitivity ?? previous.sensitivity ?? DEFAULT_PIP_IMPACT_ROUND_OVERRIDE.sensitivity;
+-        if (!Number.isInteger(sensitivity) || sensitivity < 1 || sensitivity > 10) {
+-            throw new BadRequestException('sensitivity must be a whole number between 1 and 10');
+-        }
+-
+-        const next: PipImpactRoundOverrideValue = { enabled: true, sensitivity };
+-        await writePipImpactRoundOverrideToRedis(
+-            (key, seconds, value) => this.redisPublisher.setex(key, seconds, value),
+-            next,
+-        );
+-        invalidatePipImpactRoundOverrideCache();
+-
+-        await this.prisma.marketSensitivityChangeLog.create({
+-            data: {
+-                adminId,
+-                field: 'PER-ROUND OVERRIDE',
+-                oldValue: previous.enabled ? `ON (${previous.sensitivity})` : 'OFF',
+-                newValue: `ON (${next.sensitivity})`,
+-            },
+-        });
+-        await this.auditLog.log({
+-            adminId,
+-            action: 'systemSetting.marketSensitivityRoundOverrideSet',
+-            before: { enabled: previous.enabled, sensitivity: previous.sensitivity },
+-            after: { enabled: next.enabled, sensitivity: next.sensitivity },
+-        });
+-
+-        return { success: true, data: next };
+-    }
+-
+-    async getChangeLog(query: { page?: number; limit?: number } = {}) {
+-        const page = Math.max(1, Number(query.page) || 1);
+-        const limit = Math.min(CHANGE_LOG_PAGE_SIZE_MAX, Math.max(1, Number(query.limit) || CHANGE_LOG_PAGE_SIZE_DEFAULT));
+-        const offset = (page - 1) * limit;
+-
+-        const [entries, total] = await Promise.all([
+-            this.prisma.marketSensitivityChangeLog.findMany({
+-                orderBy: { createdAt: 'desc' },
+-                skip: offset,
+-                take: limit,
+-            }),
+-            this.prisma.marketSensitivityChangeLog.count(),
+-        ]);
+-
+-        const adminIds = [...new Set(entries.map((e) => e.adminId))];
+-        const admins = adminIds.length
+-            ? await this.prisma.user.findMany({
+-                  where: { id: { in: adminIds } },
+-                  select: { id: true, name: true, email: true },
+-              })
+-            : [];
+-        const adminById = new Map(admins.map((a) => [a.id, a]));
+-
+-        return {
+-            success: true,
+-            data: entries.map((e) => {
+-                const admin = adminById.get(e.adminId);
+-                return {
+-                    id: e.id,
+-                    changedBy: admin?.name || `Admin #${e.adminId}`,
+-                    changedByEmail: admin?.email || '',
+-                    timestamp: e.createdAt.toISOString(),
+-                    field: e.field,
+-                    oldValue: e.oldValue,
+-                    newValue: e.newValue,
+-                    status: 'Applied',
+-                };
+-            }),
+-            pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+-        };
+-    }
+-
+-    private num(value: unknown): number {
+-        if (value == null) return 0;
+-        const n = Number(value);
+-        return Number.isFinite(n) ? n : 0;
+-    }
+-
+-    /**
+-     * Live, trade-by-trade price-impact breakdown for the currently active battle (or a
+-     * specific one, if given) — makes visible, without guesswork, why a round's total price
+-     * movement can diverge from a single real-user trade's own deterministic-formula
+-     * prediction: NPC trades in the same round still move price via the separate
+-     * market-pressure model, and this shows both contributions side by side.
+-     *
+-     * Reads `PriceTick` rows already written at trade time (see `redis.subscriber.ts`'s
+-     * `persistPriceTick`) — no new computation, just surfacing what the pricing engine
+-     * already computed and discarded before this feature existed.
+-     */
+-    async getLiveTradeLog(battleId?: number): Promise<{
+-        success: true;
+-        data: {
+-            battle_id: number | null;
+-            rows: Array<{
+-                time: string;
+-                side: string | null;
+-                amount: number | null;
+-                source: string | null;
+-                delta_pips: number | null;
+-                price_after: number;
+-            }>;
+-            total_delta_pips: number;
+-            real_delta_pips_sum: number;
+-            npc_delta_pips_sum: number;
+-        };
+-    }> {
+-        let resolvedBattleId = battleId;
+-        if (resolvedBattleId == null) {
+-            const activeBattle = await this.prisma.battle.findFirst({
+-                where: { status: 'ACTIVE' },
+-                orderBy: { id: 'desc' },
+-                select: { id: true },
+-            });
+-            resolvedBattleId = activeBattle?.id;
+-        }
+-
+-        if (resolvedBattleId == null) {
+-            return {
+-                success: true,
+-                data: { battle_id: null, rows: [], total_delta_pips: 0, real_delta_pips_sum: 0, npc_delta_pips_sum: 0 },
+-            };
+-        }
+-
+-        const ticks = await this.prisma.priceTick.findMany({
+-            where: { battleId: resolvedBattleId, deltaPips: { not: null } },
+-            orderBy: { createdAt: 'desc' },
+-            take: 50,
+-            select: {
+-                createdAt: true,
+-                price: true,
+-                deltaPips: true,
+-                tradeAmount: true,
+-                tradeSide: true,
+-                source: true,
+-            },
+-        });
+-
+-        let realSum = 0;
+-        let npcSum = 0;
+-        const rows = ticks.map((t) => {
+-            const deltaPips = t.deltaPips != null ? this.num(t.deltaPips) : null;
+-            if (deltaPips != null) {
+-                if (t.source === 'npc') npcSum += deltaPips;
+-                else realSum += deltaPips;
+-            }
+-            return {
+-                time: t.createdAt.toISOString(),
+-                side: t.tradeSide,
+-                amount: t.tradeAmount != null ? this.num(t.tradeAmount) : null,
+-                source: t.source,
+-                delta_pips: deltaPips,
+-                price_after: this.num(t.price),
+-            };
+-        });
+-
+-        return {
+-            success: true,
+-            data: {
+-                battle_id: resolvedBattleId,
+-                rows,
+-                total_delta_pips: Math.round((realSum + npcSum) * 10000) / 10000,
+-                real_delta_pips_sum: Math.round(realSum * 10000) / 10000,
+-                npc_delta_pips_sum: Math.round(npcSum * 10000) / 10000,
+-            },
+-        };
+-    }
+-}
++import { BadRequestException, Injectable } from '@nestjs/common';
++import { Prisma } from '@prisma/client';
++import {
++    DEFAULT_PIP_IMPACT_CONFIG,
++    DEFAULT_PIP_IMPACT_ROUND_OVERRIDE,
++    PIP_IMPACT_CONFIG_CHANNEL,
++    PRICE_PIP_SIZE,
++    PRICE_QUOTE_TICK,
++    PRICE_SENSITIVITY_DEFAULT,
++    computeDeterministicPips,
++    previewDeterministicPriceImpact,
++    invalidatePipImpactConfigCache,
++    invalidatePipImpactRoundOverrideCache,
++    readPipImpactConfigFromRedisOrDefault,
++    readPipImpactRoundOverrideFromRedisOrDefault,
++    writePipImpactConfigToRedis,
++    writePipImpactRoundOverrideToRedis,
++    clearPipImpactRoundOverrideInRedis,
++    type PipImpactConfigValue,
++    type PipImpactRoundOverrideValue,
++} from '@ticktrade/shared';
++import { RedisPublisher } from '../redis/redis.publisher';
++import { PrismaService } from '../prisma/prisma.service';
++import { AdminAuditLogService } from './audit-log/admin-audit-log.service';
++import { marketStateRedisKey, parseLastPriceFromMarketStateJson } from '../redis/market-state.util';
++
++const CHANGE_LOG_PAGE_SIZE_DEFAULT = 20;
++const CHANGE_LOG_PAGE_SIZE_MAX = 100;
++const LIVE_LOG_ROWS = 50;
++
++export interface ChangeLogQuery {
++    page?: number;
++    limit?: number;
++    /** Free text: log id (#LOG-12 / 12), admin name or e-mail, field, old/new value. */
++    search?: string;
++    /** SENSITIVITY | MULTIPLIER | OVERRIDE | CURVE | REFERENCE | All */
++    field?: string;
++    /** ISO date/time lower bound (inclusive). */
++    from?: string;
++    /** ISO date/time upper bound (inclusive). */
++    to?: string;
++}
++
++function r4(n: number): number {
++    return Math.round(n * 10000) / 10000;
++}
++
++/**
++ * Admin-facing read/write for Market Sensitivity (PipImpactConfig) — the
++ * live price-impact-per-trade-size curve used by the trading engine.
++ * Redis is the durable store and the only channel this API process shares
++ * with the separate engine process; every save is also pushed on
++ * {@link PIP_IMPACT_CONFIG_CHANNEL} so the engine applies it immediately
++ * (its pollers remain the fallback).
++ */
++@Injectable()
++export class MarketSensitivityService {
++    constructor(
++        private readonly redisPublisher: RedisPublisher,
++        private readonly prisma: PrismaService,
++        private readonly auditLog: AdminAuditLogService,
++    ) {}
++
++    private readonly get = (key: string) => this.redisPublisher.get(key);
++
++    async getConfig() {
++        const data = await readPipImpactConfigFromRedisOrDefault(this.get);
++        return {
++            success: true as const,
++            data: {
++                ...data,
++                /** The sensitivity at which the factor is exactly 1 (factor = sensitivity / this). */
++                defaultSensitivity: PRICE_SENSITIVITY_DEFAULT,
++                pipSize: PRICE_PIP_SIZE,
++                quoteTick: PRICE_QUOTE_TICK,
++            },
++        };
++    }
++
++    async getRoundOverride(): Promise<{ success: true; data: PipImpactRoundOverrideValue }> {
++        const data = await readPipImpactRoundOverrideFromRedisOrDefault(this.get);
++        return { success: true, data };
++    }
++
++    /**
++     * Exactly what a real-user trade of `amount` would do right now: the engine's own
++     * deterministic function, with the saved config, the effective sensitivity (per-round
++     * override when active) and the live price. Byte-for-byte the engine's execution path.
++     */
++    async preview(query: { amount?: string; side?: string; price?: string }) {
++        const amount = Number(query.amount);
++        if (!Number.isFinite(amount) || amount < 0) {
++            throw new BadRequestException('amount must be a non-negative number');
++        }
++        const side: 'BUY' | 'SELL' = String(query.side ?? 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
++        const [config, override] = await Promise.all([
++            readPipImpactConfigFromRedisOrDefault(this.get),
++            readPipImpactRoundOverrideFromRedisOrDefault(this.get),
++        ]);
++        const sensitivity = override.enabled ? override.sensitivity : config.sensitivity;
++
++        let lastPrice = Number(query.price);
++        let priceSource: 'request' | 'live' | 'round_start' | 'default' = 'request';
++        if (!Number.isFinite(lastPrice) || lastPrice <= 0) {
++            const live = await this.readActiveBattlePrice();
++            if (live) {
++                lastPrice = live.price;
++                priceSource = live.source;
++            } else {
++                lastPrice = 1.25;
++                priceSource = 'default';
++            }
++        }
++
++        const p = previewDeterministicPriceImpact({ tradeAmount: amount, side, lastPrice, config, sensitivity });
++        return {
++            success: true as const,
++            data: {
++                amount,
++                side,
++                formula_pips: r4(p.formulaPips),
++                executed_pips: p.executedPips,
++                price_before: p.priceBefore,
++                price_after: p.priceAfter,
++                floored_to_quote_tick: p.flooredToQuoteTick,
++                price_source: priceSource,
++                sensitivity_used: sensitivity,
++                override_active: override.enabled,
++                config,
++                default_sensitivity: PRICE_SENSITIVITY_DEFAULT,
++                pip_size: PRICE_PIP_SIZE,
++                quote_tick: PRICE_QUOTE_TICK,
++            },
++        };
++    }
++
++    async updateConfig(
++        input: {
++            referenceAmount?: number;
++            referencePips?: number;
++            curve?: 'linear' | 'sqrt' | 'log';
++            sensitivity?: number;
++            multiplier?: number;
++        },
++        adminId: number,
++    ) {
++        const current = await readPipImpactConfigFromRedisOrDefault(this.get);
++        const next: PipImpactConfigValue = {
++            referenceAmount: input.referenceAmount ?? current.referenceAmount,
++            referencePips: input.referencePips ?? current.referencePips,
++            curve: input.curve ?? current.curve ?? DEFAULT_PIP_IMPACT_CONFIG.curve,
++            sensitivity: input.sensitivity ?? current.sensitivity ?? DEFAULT_PIP_IMPACT_CONFIG.sensitivity,
++            multiplier: input.multiplier ?? current.multiplier ?? DEFAULT_PIP_IMPACT_CONFIG.multiplier,
++        };
++
++        if (!Number.isFinite(next.referenceAmount) || next.referenceAmount <= 0) {
++            throw new BadRequestException('referenceAmount must be a positive number');
++        }
++        if (!Number.isFinite(next.referencePips) || next.referencePips < 0) {
++            throw new BadRequestException('referencePips must be a non-negative number');
++        }
++        if (!Number.isInteger(next.sensitivity) || next.sensitivity < 1 || next.sensitivity > 10) {
++            throw new BadRequestException('sensitivity must be a whole number between 1 and 10');
++        }
++        if (!Number.isFinite(next.multiplier) || next.multiplier <= 0) {
++            throw new BadRequestException('multiplier must be a positive number');
++        }
++
++        const changedFields: Array<{ field: string; oldValue: string; newValue: string }> = [];
++        const trackChange = (field: string, oldVal: unknown, newVal: unknown) => {
++            if (String(oldVal) !== String(newVal)) {
++                changedFields.push({ field, oldValue: String(oldVal), newValue: String(newVal) });
++            }
++        };
++        trackChange('SENSITIVITY', current.sensitivity, next.sensitivity);
++        trackChange('MULTIPLIER', current.multiplier, next.multiplier);
++        trackChange('REFERENCE_AMOUNT', current.referenceAmount, next.referenceAmount);
++        trackChange('REFERENCE_PIPS', current.referencePips, next.referencePips);
++        trackChange('CURVE', current.curve, next.curve);
++
++        await writePipImpactConfigToRedis((key, value) => this.redisPublisher.set(key, value), next);
++        invalidatePipImpactConfigCache();
++        await this.push({ config: next });
++
++        if (changedFields.length) {
++            await this.prisma.marketSensitivityChangeLog.createMany({
++                data: changedFields.map((c) => ({ adminId, ...c })),
++            });
++            await this.auditLog.log({
++                adminId,
++                action: 'systemSetting.marketSensitivityUpdated',
++                before: current as unknown as Record<string, unknown>,
++                after: next as unknown as Record<string, unknown>,
++            });
++        }
++
++        return { success: true, data: next };
++    }
++
++    async setRoundOverride(input: { enabled: boolean; sensitivity?: number }, adminId: number) {
++        const previous = await readPipImpactRoundOverrideFromRedisOrDefault(this.get);
++
++        if (!input.enabled) {
++            await clearPipImpactRoundOverrideInRedis((key) => this.redisPublisher.del(key));
++            invalidatePipImpactRoundOverrideCache();
++            await this.push({ roundOverride: DEFAULT_PIP_IMPACT_ROUND_OVERRIDE });
++            if (previous.enabled) {
++                await this.prisma.marketSensitivityChangeLog.create({
++                    data: {
++                        adminId,
++                        field: 'PER-ROUND OVERRIDE',
++                        oldValue: `ON (${previous.sensitivity})`,
++                        newValue: 'OFF',
++                    },
++                });
++                await this.auditLog.log({
++                    adminId,
++                    action: 'systemSetting.marketSensitivityRoundOverrideSet',
++                    before: { enabled: previous.enabled, sensitivity: previous.sensitivity },
++                    after: { enabled: false },
++                });
++            }
++            return { success: true, data: DEFAULT_PIP_IMPACT_ROUND_OVERRIDE };
++        }
++
++        const sensitivity = input.sensitivity ?? previous.sensitivity ?? DEFAULT_PIP_IMPACT_ROUND_OVERRIDE.sensitivity;
++        if (!Number.isInteger(sensitivity) || sensitivity < 1 || sensitivity > 10) {
++            throw new BadRequestException('sensitivity must be a whole number between 1 and 10');
++        }
++
++        const next: PipImpactRoundOverrideValue = { enabled: true, sensitivity };
++        await writePipImpactRoundOverrideToRedis(
++            (key, seconds, value) => this.redisPublisher.setex(key, seconds, value),
++            next,
++        );
++        invalidatePipImpactRoundOverrideCache();
++        await this.push({ roundOverride: next });
++
++        if (!previous.enabled || previous.sensitivity !== next.sensitivity) {
++            await this.prisma.marketSensitivityChangeLog.create({
++                data: {
++                    adminId,
++                    field: 'PER-ROUND OVERRIDE',
++                    oldValue: previous.enabled ? `ON (${previous.sensitivity})` : 'OFF',
++                    newValue: `ON (${next.sensitivity})`,
++                },
++            });
++            await this.auditLog.log({
++                adminId,
++                action: 'systemSetting.marketSensitivityRoundOverrideSet',
++                before: { enabled: previous.enabled, sensitivity: previous.sensitivity },
++                after: { enabled: next.enabled, sensitivity: next.sensitivity },
++            });
++        }
++
++        return { success: true, data: next };
++    }
++
++    async getChangeLog(query: ChangeLogQuery = {}) {
++        const page = Math.max(1, Number(query.page) || 1);
++        const limit = Math.min(CHANGE_LOG_PAGE_SIZE_MAX, Math.max(1, Number(query.limit) || CHANGE_LOG_PAGE_SIZE_DEFAULT));
++        const offset = (page - 1) * limit;
++
++        const where: Prisma.MarketSensitivityChangeLogWhereInput = {};
++        const field = String(query.field ?? '').trim().toUpperCase();
++        if (field && field !== 'ALL') {
++            if (field === 'OVERRIDE' || field === 'PER-ROUND OVERRIDE') where.field = { contains: 'OVERRIDE' };
++            else if (field === 'REFERENCE') where.field = { startsWith: 'REFERENCE' };
++            else where.field = { contains: field, mode: 'insensitive' };
++        }
++        const from = query.from ? new Date(query.from) : null;
++        const to = query.to ? new Date(query.to) : null;
++        if ((from && !Number.isNaN(from.getTime())) || (to && !Number.isNaN(to.getTime()))) {
++            where.createdAt = {
++                ...(from && !Number.isNaN(from.getTime()) ? { gte: from } : {}),
++                ...(to && !Number.isNaN(to.getTime()) ? { lte: to } : {}),
++            };
++        }
++        const search = String(query.search ?? '').trim();
++        if (search) {
++            const idMatch = /^#?(?:LOG-)?(\d+)$/i.exec(search);
++            const admins = await this.prisma.user.findMany({
++                where: {
++                    OR: [
++                        { name: { contains: search, mode: 'insensitive' } },
++                        { email: { contains: search, mode: 'insensitive' } },
++                    ],
++                },
++                select: { id: true },
++                take: 200,
++            });
++            where.OR = [
++                ...(idMatch ? [{ id: Number(idMatch[1]) }] : []),
++                { field: { contains: search, mode: 'insensitive' } },
++                { oldValue: { contains: search, mode: 'insensitive' } },
++                { newValue: { contains: search, mode: 'insensitive' } },
++                ...(admins.length ? [{ adminId: { in: admins.map((a) => a.id) } }] : []),
++            ];
++        }
++
++        const [entries, total] = await Promise.all([
++            this.prisma.marketSensitivityChangeLog.findMany({
++                where,
++                orderBy: { createdAt: 'desc' },
++                skip: offset,
++                take: limit,
++            }),
++            this.prisma.marketSensitivityChangeLog.count({ where }),
++        ]);
++
++        const adminIds = [...new Set(entries.map((e) => e.adminId))];
++        const adminRows = adminIds.length
++            ? await this.prisma.user.findMany({
++                  where: { id: { in: adminIds } },
++                  select: { id: true, name: true, email: true },
++              })
++            : [];
++        const adminById = new Map(adminRows.map((a) => [a.id, a]));
++
++        return {
++            success: true,
++            data: entries.map((e) => {
++                const admin = adminById.get(e.adminId);
++                return {
++                    id: e.id,
++                    changedBy: admin?.name || `Admin #${e.adminId}`,
++                    changedByEmail: admin?.email || '',
++                    timestamp: e.createdAt.toISOString(),
++                    field: e.field,
++                    oldValue: e.oldValue,
++                    newValue: e.newValue,
++                    status: 'Applied',
++                };
++            }),
++            pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
++        };
++    }
++
++    private num(value: unknown): number {
++        if (value == null) return 0;
++        const n = Number(value);
++        return Number.isFinite(n) ? n : 0;
++    }
++
++    /** Current price of the active battle from the engine's market state in Redis. */
++    private async readActiveBattlePrice(): Promise<{ price: number; source: 'live' | 'round_start' } | null> {
++        const active = await this.prisma.battle.findFirst({
++            where: { status: 'ACTIVE' },
++            orderBy: { id: 'desc' },
++            select: { id: true, startPrice: true },
++        });
++        if (!active) return null;
++        const raw = await this.redisPublisher.get(marketStateRedisKey(active.id)).catch(() => null);
++        const live = parseLastPriceFromMarketStateJson(raw);
++        if (live != null && Number.isFinite(live) && live > 0) return { price: live, source: 'live' };
++        const start = this.num(active.startPrice);
++        return start > 0 ? { price: start, source: 'round_start' } : null;
++    }
++
++    /**
++     * Live, trade-by-trade price-impact breakdown for the active battle (or a given one).
++     *
++     * Rows come from `price_ticks` rows written for every priced trade (engine event
++     * `trade.priced.v1`, never coalesced). The round total is measured on the price itself
++     * (current price − round start price) so it is exact regardless of how many rows exist;
++     * the real / NPC split comes from the rows' own realised pips, and whatever is left
++     * (quote rounding on individual ticks, ticks from before this feature) is reported as
++     * `other`, never silently attributed to either side.
++     */
++    async getLiveTradeLog(battleId?: number) {
++        let resolvedBattleId = battleId;
++        if (resolvedBattleId == null) {
++            const activeBattle = await this.prisma.battle.findFirst({
++                where: { status: 'ACTIVE' },
++                orderBy: { id: 'desc' },
++                select: { id: true },
++            });
++            resolvedBattleId = activeBattle?.id;
++        }
++        const empty = {
++            battle_id: null as number | null,
++            status: null as string | null,
++            start_price: null as number | null,
++            current_price: null as number | null,
++            rows: [] as Array<Record<string, unknown>>,
++            row_count: 0,
++            real_trade_count: 0,
++            npc_trade_count: 0,
++            total_delta_pips: 0,
++            real_delta_pips_sum: 0,
++            npc_delta_pips_sum: 0,
++            other_delta_pips: 0,
++            sensitivity_used: null as number | null,
++            override_active: false,
++            config: null as PipImpactConfigValue | null,
++        };
++        if (resolvedBattleId == null) {
++            return { success: true as const, data: empty };
++        }
++
++        const battle = await this.prisma.battle.findUnique({
++            where: { id: resolvedBattleId },
++            select: { id: true, status: true, startPrice: true, endPrice: true },
++        });
++        if (!battle) {
++            return { success: true as const, data: empty };
++        }
++
++        const attributed = { battleId: battle.id, deltaPips: { not: null } } as const;
++        const [ticks, groups, latestTick, config, override] = await Promise.all([
++            this.prisma.priceTick.findMany({
++                where: attributed,
++                orderBy: { id: 'desc' },
++                take: LIVE_LOG_ROWS,
++                select: { createdAt: true, price: true, deltaPips: true, tradeAmount: true, tradeSide: true, source: true },
++            }),
++            this.prisma.priceTick.groupBy({
++                by: ['source'],
++                where: attributed,
++                _sum: { deltaPips: true },
++                _count: { _all: true },
++            }),
++            this.prisma.priceTick.findFirst({
++                where: { battleId: battle.id },
++                orderBy: { id: 'desc' },
++                select: { price: true },
++            }),
++            readPipImpactConfigFromRedisOrDefault(this.get),
++            readPipImpactRoundOverrideFromRedisOrDefault(this.get),
++        ]);
++        const sensitivityUsed = override.enabled ? override.sensitivity : config.sensitivity;
++
++        const startPrice = this.num(battle.startPrice);
++        let currentPrice: number | null = null;
++        if (battle.status === 'ACTIVE') {
++            const raw = await this.redisPublisher.get(marketStateRedisKey(battle.id)).catch(() => null);
++            const live = parseLastPriceFromMarketStateJson(raw);
++            if (live != null && Number.isFinite(live) && live > 0) currentPrice = live;
++        } else if (battle.endPrice != null) {
++            currentPrice = this.num(battle.endPrice);
++        }
++        if (currentPrice == null) {
++            currentPrice = latestTick ? this.num(latestTick.price) : startPrice;
++        }
++
++        let realSum = 0;
++        let npcSum = 0;
++        let realCount = 0;
++        let npcCount = 0;
++        for (const g of groups) {
++            const sum = this.num(g._sum.deltaPips);
++            const count = g._count._all;
++            if (g.source === 'npc') {
++                npcSum += sum;
++                npcCount += count;
++            } else {
++                realSum += sum;
++                realCount += count;
++            }
++        }
++        const total = startPrice > 0 ? (currentPrice - startPrice) / PRICE_PIP_SIZE : realSum + npcSum;
++
++        const rows = ticks.map((t) => {
++            const amount = t.tradeAmount != null ? this.num(t.tradeAmount) : null;
++            const isReal = t.source !== 'npc';
++            const side = t.tradeSide === 'SELL' ? 'SELL' : t.tradeSide === 'BUY' ? 'BUY' : null;
++            const formula =
++                isReal && amount != null && side
++                    ? r4((side === 'BUY' ? 1 : -1) * computeDeterministicPips(amount, config, sensitivityUsed))
++                    : null;
++            return {
++                time: t.createdAt.toISOString(),
++                side,
++                amount,
++                source: t.source,
++                /** Real trades: what the admin formula says for this amount with the settings in force now. */
++                formula_pips: formula,
++                /** What the tick actually moved the 5-decimal quote (flat 0.0001 pips). */
++                delta_pips: t.deltaPips != null ? this.num(t.deltaPips) : null,
++                price_after: this.num(t.price),
++            };
++        });
++
++        return {
++            success: true as const,
++            data: {
++                battle_id: battle.id,
++                status: battle.status,
++                start_price: startPrice,
++                current_price: currentPrice,
++                rows,
++                row_count: realCount + npcCount,
++                real_trade_count: realCount,
++                npc_trade_count: npcCount,
++                total_delta_pips: r4(total),
++                real_delta_pips_sum: r4(realSum),
++                npc_delta_pips_sum: r4(npcSum),
++                other_delta_pips: r4(total - realSum - npcSum),
++                sensitivity_used: sensitivityUsed,
++                override_active: override.enabled,
++                config,
++            },
++        };
++    }
++
++    private async push(payload: { config?: PipImpactConfigValue; roundOverride?: PipImpactRoundOverrideValue }): Promise<void> {
++        try {
++            await this.redisPublisher.publish(PIP_IMPACT_CONFIG_CHANNEL, { ...payload, timestamp: Date.now() });
++        } catch {
++            // Durable write already landed; the engine's poller picks it up within 5 s.
++        }
++    }
++}
+diff --git a/apps/api/src/admin/price-movement-audit.service.ts b/apps/api/src/admin/price-movement-audit.service.ts
+index 6931e3e..d6a579b 100644
+--- a/apps/api/src/admin/price-movement-audit.service.ts
++++ b/apps/api/src/admin/price-movement-audit.service.ts
+@@ -112,7 +112,12 @@ export class PriceMovementAuditService {
+         return { start: new Date(Date.UTC(y, m, 1, 0, 0, 0, 0)), end: new Date(Date.UTC(y, m, d, 23, 59, 59, 0)) };
+     }
+ 
+-    /** Shared by both the list endpoint and the CSV export — one flagging computation. */
++    /**
++     * Shared by both the list endpoint and the CSV export — one flagging computation.
++     * Returns every settled round in the window with its PASS/FAIL verdict (`status`
++     * narrows to `flagged`/`fail` or `pass`), plus window-wide summary figures computed
++     * before pagination so the page's metrics are not a function of the current page.
++     */
+     private async getFlaggedRows(query: ListBattlesInspectorQueryDto) {
+         const { start, end } = this.resolveWindow(query);
+         const thresholdPct = await this.getThresholdPct();
+@@ -162,7 +167,12 @@ export class PriceMovementAuditService {
+ 
+                 const buyVolume = this.roundMoney(this.num(b.buyPot));
+                 const sellVolume = this.roundMoney(this.num(b.sellPot));
+-                const pipConfig = b.pipImpactConfigUsed as { sensitivity?: number; multiplier?: number } | null;
++                const pipConfig = b.pipImpactConfigUsed as {
++                    sensitivity?: number;
++                    multiplier?: number;
++                    curve?: string;
++                    roundOverrideApplied?: boolean;
++                } | null;
+                 const priceVariancePct = b.priceVariancePct != null ? this.num(b.priceVariancePct) : null;
+ 
+                 const isSwingFlagged = swingPct >= thresholdPct;
+@@ -184,22 +194,50 @@ export class PriceMovementAuditService {
+                     sell_volume: sellVolume,
+                     net_volume: this.roundMoney(buyVolume - sellVolume),
+                     pip_sensitivity_used: pipConfig?.sensitivity ?? null,
+-                    multiplier_used: this.num(b.eventMultiplier),
++                    // The Market Sensitivity MULTIPLIER the round was priced with. (This column
++                    // used to show battle.eventMultiplier — the round's event multiplier — which
++                    // is a different setting entirely.)
++                    multiplier_used: pipConfig?.multiplier ?? null,
++                    curve_used: pipConfig?.curve ?? null,
++                    round_override_applied: pipConfig?.roundOverrideApplied ?? null,
++                    event_multiplier: this.num(b.eventMultiplier),
+                     pip_sensitivity_changed_mid_round: b.pipSensitivityChangedMidRound,
+                     expected_end_price: b.expectedEndPrice != null ? this.num(b.expectedEndPrice) : null,
+                     price_variance_pct: priceVariancePct,
+                     is_flagged: isSwingFlagged || isVarianceFlagged,
+                 };
+-            })
+-            .filter((r) => query.battle_id != null || r.is_flagged);
++            });
++
++        const flaggedCount = rows.filter((r) => r.is_flagged).length;
++        const summary = {
++            total: rows.length,
++            flagged: flaggedCount,
++            passed: rows.length - flaggedCount,
++            pass_rate_pct: rows.length > 0 ? this.roundMoney(((rows.length - flaggedCount) / rows.length) * 100) : null,
++            avg_swing_pct: rows.length > 0 ? this.roundMoney(rows.reduce((s, r) => s + r.swing_pct, 0) / rows.length) : null,
++            avg_abs_variance_pct: (() => {
++                const withVariance = rows.filter((r) => r.price_variance_pct != null);
++                return withVariance.length > 0
++                    ? this.roundMoney(withVariance.reduce((s, r) => s + Math.abs(r.price_variance_pct as number), 0) / withVariance.length)
++                    : null;
++            })(),
++        };
++
++        const status = String(query.status ?? 'all').toLowerCase();
++        const filtered =
++            query.battle_id != null || status === 'all' || status === ''
++                ? rows
++                : status === 'pass'
++                  ? rows.filter((r) => !r.is_flagged)
++                  : rows.filter((r) => r.is_flagged);
+ 
+-        return { rows, thresholdPct };
++        return { rows: filtered, thresholdPct, summary };
+     }
+ 
+     async listFlaggedBattles(query: ListBattlesInspectorQueryDto) {
+         const page = Math.max(1, query.page ?? 1);
+         const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+-        const [{ rows, thresholdPct }, lastThresholdChange] = await Promise.all([
++        const [{ rows, thresholdPct, summary }, lastThresholdChange] = await Promise.all([
+             this.getFlaggedRows(query),
+             this.getLastThresholdChange(),
+         ]);
+@@ -213,6 +251,7 @@ export class PriceMovementAuditService {
+             data: {
+                 threshold_pct: thresholdPct,
+                 last_threshold_change: lastThresholdChange,
++                summary,
+                 battles: paged,
+                 pagination: {
+                     page,
+@@ -250,6 +289,8 @@ export class PriceMovementAuditService {
+             { header: 'net_volume', value: (r) => r.net_volume },
+             { header: 'pip_sensitivity_used', value: (r) => r.pip_sensitivity_used },
+             { header: 'multiplier_used', value: (r) => r.multiplier_used },
++            { header: 'curve_used', value: (r) => r.curve_used },
++            { header: 'round_override_applied', value: (r) => r.round_override_applied },
+             { header: 'pip_sensitivity_changed_mid_round', value: (r) => r.pip_sensitivity_changed_mid_round },
+             { header: 'expected_end_price', value: (r) => r.expected_end_price },
+             { header: 'price_variance_pct', value: (r) => r.price_variance_pct },
+@@ -390,7 +431,8 @@ export class PriceMovementAuditService {
+                 battle_id: battle.id,
+                 start_price: startPrice,
+                 actual_end_price: actualEndPrice,
+-                expected_end_price: this.roundMoney(expectedEndPrice),
++                // A price, not money: keep the 5-decimal quote (this used to be rounded to cents).
++                expected_end_price: Number(expectedEndPrice.toFixed(5)),
+                 variance_pct: variancePct,
+                 threshold_pct: thresholdPct,
+                 is_flagged: Math.abs(variancePct) >= thresholdPct,
+diff --git a/apps/api/src/redis/redis.subscriber.ts b/apps/api/src/redis/redis.subscriber.ts
+index 6e1af82..fa014a0 100644
+--- a/apps/api/src/redis/redis.subscriber.ts
++++ b/apps/api/src/redis/redis.subscriber.ts
+@@ -41,6 +41,8 @@ import {
+     type SettlementCompletedV1,
+     type SettlementBattleEndCoreV1,
+     BATTLE_LOCKED_CHANNEL,
++    TRADE_PRICED_CHANNEL,
++    type TradePricedV1,
+ } from '@ticktrade/shared';
+ import {
+     balanceSnapshotRedisAudienceEnabled,
+@@ -247,8 +249,15 @@ const ENGINE_WS_BROADCAST_CHANNELS = new Set([
+     CHART_EVENTS.CLOSED,
+     TRADE_EXECUTED_CHANNEL,
+     BATTLE_LOCKED_CHANNEL,
++    TRADE_PRICED_CHANNEL,
+ ]);
+ 
++/** Persist one `price_ticks` row per priced trade (the admin Live Trade Log source). Default on. */
++function tradePricedPgPersistEnabled(): boolean {
++    const raw = String(process.env.TRADE_PRICED_PG_PERSIST ?? 'true').toLowerCase();
++    return !['0', 'false', 'off'].includes(raw);
++}
++
+ /**
+  * Max time `handleBattleEnd` will hold off the cooldown emit while
+  * waiting for `emitBattleEndDetails` to finish its DB lookups.
+@@ -518,6 +527,7 @@ export class RedisSubscriber implements OnModuleInit, OnModuleDestroy {
+             CHART_EVENTS.CLOSED,
+             TRADE_EXECUTED_CHANNEL,
+             BATTLE_LOCKED_CHANNEL,
++            TRADE_PRICED_CHANNEL,
+         );
+ 
+         this.redis.on('message', (channel, message) => {
+@@ -734,6 +744,9 @@ export class RedisSubscriber implements OnModuleInit, OnModuleDestroy {
+             case BATTLE_LOCKED_CHANNEL:
+                 this.handleBattleLocked(payload);
+                 break;
++            case TRADE_PRICED_CHANNEL:
++                this.handleTradePriced(payload as TradePricedV1);
++                break;
+             default:
+                 this.logger.warn(`Unhandled Redis channel: ${channel}`);
+         }
+@@ -812,7 +825,9 @@ export class RedisSubscriber implements OnModuleInit, OnModuleDestroy {
+ 
+         this.lastKnownPriceByBattle.set(payload.battleId, roundedRealPrice);
+ 
+-        if (source !== 'free_tap') {
++        // Trade ticks are persisted from `trade.priced.v1` (one row per trade, never coalesced);
++        // only unattributed ticks (heartbeats, battle-started) are still written from here.
++        if (source !== 'free_tap' && payload.tradeAttribution == null) {
+             this.persistPriceTick(payload.battleId, roundedRealPrice, {
+                 deltaPips: payload.deltaPips,
+                 tradeAmount: payload.tradeAmount,
+@@ -954,6 +969,26 @@ export class RedisSubscriber implements OnModuleInit, OnModuleDestroy {
+      * The in-memory dedupe (`priceTickDedupeKeys`) runs **before** this method, so only
+      * unique, trade-driven ticks are ever queued here.
+      */
++    /** One `price_ticks` row per priced trade — the source of the admin Live Trade Log. */
++    private handleTradePriced(payload: TradePricedV1): void {
++        const battleId = Number(payload?.battleId);
++        const price = Number(payload?.priceAfter);
++        if (!Number.isFinite(battleId) || battleId <= 0 || !isValidPrice(price)) return;
++        if (!tradePricedPgPersistEnabled()) return;
++        this.lastKnownPriceByBattle.set(battleId, this.roundPrice(price));
++        this.persistPriceTick(
++            battleId,
++            this.roundPrice(price),
++            {
++                deltaPips: Number.isFinite(Number(payload.deltaPips)) ? Number(payload.deltaPips) : undefined,
++                tradeAmount: Number.isFinite(Number(payload.amount)) ? Number(payload.amount) : undefined,
++                tradeSide: payload.side === 'BUY' || payload.side === 'SELL' ? payload.side : undefined,
++                source: payload.source === 'npc' ? 'npc' : 'real',
++            },
++            { force: true },
++        );
++    }
++
+     private persistPriceTick(
+         battleId: number,
+         price: number,
+@@ -963,8 +998,9 @@ export class RedisSubscriber implements OnModuleInit, OnModuleDestroy {
+             tradeSide?: string;
+             source?: string;
+         },
++        opts?: { force?: boolean },
+     ): void {
+-        if (!priceTickPgPersistEnabled()) {
++        if (!opts?.force && !priceTickPgPersistEnabled()) {
+             return;
+         }
+         this.priceTickBuffer.push({
+diff --git a/apps/engine/src/battle/battle-engine.service.ts b/apps/engine/src/battle/battle-engine.service.ts
+index 29d6936..e14cd92 100644
+--- a/apps/engine/src/battle/battle-engine.service.ts
++++ b/apps/engine/src/battle/battle-engine.service.ts
+@@ -20,6 +20,9 @@ import type { MarketStateRepository } from '../market/market-state.repository';
+ import type { ContinuousMarketService } from '../market/continuous-market.service';
+ import {
+     clearPipImpactRoundOverrideInRedis,
++    pipImpactUsedKey,
++    PIP_IMPACT_USED_TTL_SECONDS,
++    type PipImpactConfigUsedValue,
+     invalidatePipImpactRoundOverrideCache,
+     redisGraceAnchorKey,
+     redisSettlementGraceKey,
+@@ -27,8 +30,11 @@ import {
+ } from '@ticktrade/shared';
+ import {
+     DEFAULT_PIP_IMPACT_ROUND_OVERRIDE,
++    getPipImpactConfig,
++    getPipImpactRoundOverride,
+     setPipImpactRoundOverride,
+ } from './price-from-imbalance';
++import { getSharedCommandRedis } from '../redis/redis.client';
+ import { engineHeavyPublishOnChartTick } from '../config/engine-hot-path.env';
+ import type { EngineActiveBattleRuntime } from './engine-active-battle';
+ 
+@@ -1053,6 +1059,11 @@ export class BattleEngineService {
+         try {
+             console.log(`Ending battle ${battleId}`);
+ 
++            // Record the config this round was actually priced with BEFORE the per-round
++            // override is cleared below, for the settlement process (which never loads the
++            // live config) to snapshot into the Price Movement Audit.
++            await this.stashPipImpactConfigUsed(battleId);
++
+             if (this.beforeBattleClose) {
+                 try {
+                     await this.beforeBattleClose(battleId);
+@@ -1156,6 +1167,33 @@ export class BattleEngineService {
+      * Smoothed pressure is a *global* Redis key with no TTL, so a round that
+      * ended buy-dominated handed that bias to the next round's very first trade.
+      */
++    private async stashPipImpactConfigUsed(battleId: number): Promise<void> {
++        try {
++            const cfg = getPipImpactConfig();
++            const ov = getPipImpactRoundOverride();
++            const used: PipImpactConfigUsedValue = {
++                referenceAmount: cfg.referenceAmount,
++                referencePips: cfg.referencePips,
++                curve: cfg.curve ?? 'log',
++                sensitivity: ov.enabled ? ov.sensitivity : cfg.sensitivity ?? 5,
++                multiplier: cfg.multiplier ?? 1,
++                roundOverrideApplied: ov.enabled,
++                recordedAt: Date.now(),
++            };
++            await getSharedCommandRedis().set(
++                pipImpactUsedKey(battleId),
++                JSON.stringify(used),
++                'EX',
++                PIP_IMPACT_USED_TTL_SECONDS,
++            );
++        } catch (err) {
++            console.warn(
++                `[BattleEngine] stashing pip impact config for battle=${battleId} failed`,
++                err instanceof Error ? err.message : err,
++            );
++        }
++    }
++
+     private async clearRoundScopedPriceState(): Promise<void> {
+         try {
+             await clearPipImpactRoundOverrideInRedis((key) => this.redisState.del(key));
+diff --git a/apps/engine/src/battle/battle-events.publisher.ts b/apps/engine/src/battle/battle-events.publisher.ts
+index 795b6ce..fb115f4 100644
+--- a/apps/engine/src/battle/battle-events.publisher.ts
++++ b/apps/engine/src/battle/battle-events.publisher.ts
+@@ -1,4 +1,4 @@
+-import { SETTLEMENT_COMPLETED_CHANNEL } from '@ticktrade/shared';
++import { SETTLEMENT_COMPLETED_CHANNEL, TRADE_PRICED_CHANNEL, type TradePricedV1 } from '@ticktrade/shared';
+ import { RedisPublisher } from '../redis/redis.publisher';
+ 
+ export type PriceTickSource = 'trade' | 'heartbeat' | 'free_tap';
+@@ -26,6 +26,11 @@ export interface PriceTickOpts {
+ export class BattleEventsPublisher {
+     constructor(private redis: RedisPublisher) { }
+ 
++    /** One row per priced trade (real + NPC), never coalesced — feeds the admin Live Trade Log. */
++    tradePriced(payload: TradePricedV1) {
++        return this.redis.publish(TRADE_PRICED_CHANNEL, payload);
++    }
++
+     priceTick(
+         battleId: number,
+         price: number,
+diff --git a/apps/engine/src/battle/battle-settlement.service.ts b/apps/engine/src/battle/battle-settlement.service.ts
+index 7ce1a57..1159cff 100644
+--- a/apps/engine/src/battle/battle-settlement.service.ts
++++ b/apps/engine/src/battle/battle-settlement.service.ts
+@@ -26,11 +26,15 @@ import {
+     loadRpcUserIdByLinkedUserId,
+     flushLiveBattleBuffersToPostgres,
+     liveBattleRedisOnlyEnabled,
+-    getPipImpactConfig,
+-    getPipImpactRoundOverride,
+     replayBattlePricing,
+     type PipImpactConfigValue,
+     type ReplayTrade,
++    parsePipImpactConfigUsed,
++    pipImpactUsedKey,
++    readPipImpactConfigFromRedisOrDefault,
++    readPipImpactRoundOverrideFromRedisOrDefault,
++    resolveBattleFreezeSeconds,
++    SETTING_BATTLE_FREEZE_SECONDS,
+     NPC_ENGINE_MODE_REDIS_KEY,
+     NPC_ENGINE_MODE_SETTING_KEY,
+     NPC_ORGANIC_SETTINGS_REDIS_KEY,
+@@ -539,18 +543,49 @@ export class BattleSettlementService {
+             let expectedEndPriceNum: number | null = null;
+             let priceVariancePctNum: number | null = null;
+             try {
+-                const liveConfig = getPipImpactConfig();
+-                const roundOverride = getPipImpactRoundOverride();
+-                pipImpactConfigUsed = {
+-                    referenceAmount: liveConfig.referenceAmount,
+-                    referencePips: liveConfig.referencePips,
+-                    curve: liveConfig.curve ?? 'log',
+-                    sensitivity:
+-                        roundOverride.enabled
+-                            ? roundOverride.sensitivity
+-                            : liveConfig.sensitivity ?? 5,
+-                    multiplier: liveConfig.multiplier ?? 1,
+-                };
++                // Settlement may run in the settlement-worker process, which never loads the
++                // engine's in-memory Market Sensitivity config — reading the module getters here
++                // returned the compiled-in defaults (log / 5 / 1) and produced a wrong "expected
++                // end price" for every queued settlement. Use the per-round record the engine
++                // leader wrote when the round closed (it still knows the per-round override), and
++                // fall back to the durable Redis config.
++                const settlementRedis = getSharedCommandRedis();
++                const stashed = parsePipImpactConfigUsed(
++                    await settlementRedis.get(pipImpactUsedKey(battleId)),
++                );
++                let roundOverrideApplied = false;
++                if (stashed) {
++                    pipImpactConfigUsed = {
++                        referenceAmount: stashed.referenceAmount,
++                        referencePips: stashed.referencePips,
++                        curve: stashed.curve ?? 'log',
++                        sensitivity: stashed.sensitivity,
++                        multiplier: stashed.multiplier,
++                    };
++                    roundOverrideApplied = stashed.roundOverrideApplied;
++                } else {
++                    const liveConfig = await readPipImpactConfigFromRedisOrDefault((key) =>
++                        settlementRedis.get(key),
++                    );
++                    const roundOverride = await readPipImpactRoundOverrideFromRedisOrDefault((key) =>
++                        settlementRedis.get(key),
++                    );
++                    pipImpactConfigUsed = {
++                        referenceAmount: liveConfig.referenceAmount,
++                        referencePips: liveConfig.referencePips,
++                        curve: liveConfig.curve ?? 'log',
++                        sensitivity: roundOverride.enabled ? roundOverride.sensitivity : liveConfig.sensitivity ?? 5,
++                        multiplier: liveConfig.multiplier ?? 1,
++                    };
++                    roundOverrideApplied = roundOverride.enabled;
++                }
++                (pipImpactConfigUsed as PipImpactConfigValue & { roundOverrideApplied?: boolean }).roundOverrideApplied =
++                    roundOverrideApplied;
++                const freezeRow = await tx.systemSetting.findUnique({
++                    where: { settingKey: SETTING_BATTLE_FREEZE_SECONDS },
++                    select: { settingValue: true },
++                });
++                const freezeSecondsUsed = resolveBattleFreezeSeconds(freezeRow?.settingValue);
+ 
+                 const battleEndTime = new Date(
+                     battle.startTime.getTime() + battle.durationSeconds * 1000,
+@@ -606,7 +641,7 @@ export class BattleSettlementService {
+                         trades: replayTrades,
+                     },
+                     pipImpactConfigUsed,
+-                    10, // freeze seconds — matches DEFAULT_BATTLE_FREEZE_SECONDS in price-audit-replay.ts; battle_freeze_seconds isn't threaded into settlement today
++                    freezeSecondsUsed,
+                 );
+                 expectedEndPriceNum = replay.expectedEndPrice;
+                 priceVariancePctNum =
+diff --git a/apps/engine/src/events/trade-executed.handler.ts b/apps/engine/src/events/trade-executed.handler.ts
+index 14a8dc3..f208f8d 100644
+--- a/apps/engine/src/events/trade-executed.handler.ts
++++ b/apps/engine/src/events/trade-executed.handler.ts
+@@ -239,10 +239,34 @@ export class TradeExecutedHandler {
+ 
+     if (status !== 'ACTIVE') return;
+ 
+-    const { applied, volumeScale, deltaPips, isNpcOrder, tradeAmount, tradeSide } =
++    const { applied, volumeScale, deltaPips, formulaPips, priceBefore, priceAfter, isNpcOrder, tradeAmount, tradeSide } =
+       await this.marketState.applyTradeExecuted(v1, startTime, durationSeconds);
+     if (!applied) return;
+ 
++    // Attribution row for every priced trade — published outside the price-tick coalescer
++    // so the Live Trade Log sees each trade even when several land within 200 ms.
++    if ((v1.side === 'BUY' || v1.side === 'SELL') && priceBefore != null && priceAfter != null) {
++      const isNpc = isNpcOrder ?? v1.userId === 0;
++      const formula = formulaPips ?? null;
++      void this.events
++        .tradePriced({
++          eventId: v1.eventId,
++          battleId: v1.battleId,
++          userId: v1.userId,
++          source: isNpc ? 'npc' : 'real',
++          side: v1.side,
++          amount: Number(v1.amount ?? 0),
++          priceBefore,
++          priceAfter,
++          deltaPips: deltaPips ?? 0,
++          formulaPips: formula,
++          flooredToQuoteTick:
++            !isNpc && formula != null && Math.abs(formula) > 0 && Math.abs(formula) < 0.1 && Math.abs(deltaPips ?? 0) >= 0.1,
++          timestamp: Date.now(),
++        })
++        .catch(() => undefined);
++    }
++
+     await clearFreeTapDisplayPrice(v1.battleId);
+ 
+     const state = await this.marketState.get(v1.battleId);
+diff --git a/apps/engine/src/index.ts b/apps/engine/src/index.ts
+index d70f769..f0d0dfa 100644
+--- a/apps/engine/src/index.ts
++++ b/apps/engine/src/index.ts
+@@ -20,7 +20,14 @@ import { MarketStateRepository } from './market/market-state.repository';
+ import { MarketConfigCache } from './market/market-config.cache';
+ import { PriceEngineService } from './pricing/price-engine.service';
+ import { startPipImpactConfigPolling, startPipImpactRoundOverridePolling } from './battle/price-from-imbalance';
+-import { readPipImpactConfigFromRedisOrDefault, readPipImpactRoundOverrideFromRedisOrDefault } from '@ticktrade/shared';
++import {
++    readPipImpactConfigFromRedisOrDefault,
++    readPipImpactRoundOverrideFromRedisOrDefault,
++    PIP_IMPACT_CONFIG_CHANNEL,
++    parsePipImpactConfigPush,
++} from '@ticktrade/shared';
++import { setPipImpactConfig, setPipImpactRoundOverride } from './battle/price-from-imbalance';
++import { createRedisClient } from './redis/redis.client';
+ import { MarketProjectionPublisher } from './market/market-projection.publisher';
+ import { MarketStateService } from './market/market-state.service';
+ import { TradeExecutedHandler } from './events/trade-executed.handler';
+@@ -146,6 +153,27 @@ async function main() {
+         startPipImpactRoundOverridePolling(() =>
+             readPipImpactRoundOverrideFromRedisOrDefault((key) => redisPublisher.get(key)),
+         );
++        // Push path: the admin's save is applied the instant it is published, so a trade placed
++        // right after "Save Configuration" already uses the new numbers (the pollers above remain
++        // the fallback for a missed message). Applied on every engine process, leader or not.
++        try {
++            const pipConfigPush = createRedisClient('subscriber');
++            await pipConfigPush.subscribe(PIP_IMPACT_CONFIG_CHANNEL);
++            pipConfigPush.on('message', (channel, message) => {
++                if (channel !== PIP_IMPACT_CONFIG_CHANNEL) return;
++                const push = parsePipImpactConfigPush(message);
++                if (!push) return;
++                if (push.config) setPipImpactConfig(push.config);
++                if (push.roundOverride) setPipImpactRoundOverride(push.roundOverride);
++                console.log(
++                    `[Engine] market sensitivity push applied${push.config ? ` config=${JSON.stringify(push.config)}` : ''}${
++                        push.roundOverride ? ` override=${JSON.stringify(push.roundOverride)}` : ''
++                    }`,
++                );
++            });
++        } catch (err) {
++            console.warn('[Engine] market sensitivity push subscribe failed (polling only)', err instanceof Error ? err.message : err);
++        }
+ 
+         // Single shared instance — engine acts as cache owner (bootstrap
+         // on battle create + drain on settlement) AND a writer for NPC
+diff --git a/apps/engine/src/market/market-state.service.ts b/apps/engine/src/market/market-state.service.ts
+index 09b6d61..4a4ac93 100644
+--- a/apps/engine/src/market/market-state.service.ts
++++ b/apps/engine/src/market/market-state.service.ts
+@@ -8,6 +8,7 @@ import {
+   type TradeExecutedV1,
+   computeTradeFlowInfluence,
+   enforceImmediateDirectionalMove,
++  PRICE_PIP_SIZE,
+ } from '@ticktrade/shared';
+ import { randomUUID } from 'crypto';
+ 
+@@ -129,8 +130,12 @@ export class MarketStateService {
+   ): Promise<{
+     applied: boolean;
+     volumeScale: number;
+-    /** This tick's own signed pip contribution — undefined when not applied. */
++    /** Realised move of this tick on the 5-decimal quote, in flat 0.0001 pips (signed) — undefined when not applied. */
+     deltaPips?: number;
++    /** Real trades: the admin formula's unrounded signed pips; null for NPC trades. */
++    formulaPips?: number | null;
++    priceBefore?: number;
++    priceAfter?: number;
+     isNpcOrder?: boolean;
+     tradeAmount?: number;
+     tradeSide?: 'BUY' | 'SELL';
+@@ -191,9 +196,14 @@ export class MarketStateService {
+     const tradeVolumeNotional = resolveTradeVolumeNotional(payload);
+ 
+     let price = this.priceEngine.clampPrice(result.price, state.startPrice);
+-    const priceBeforeEnforce = price;
+-    price = enforceImmediateDirectionalMove(payload, state.lastPrice, price);
+-    price = this.priceEngine.clampPrice(price, state.startPrice);
++    // The post-clamp directional nudge belongs to the NPC market-pressure path only. A
++    // real-user trade is priced by the deterministic admin formula (with its own flat
++    // one-quote-tick floor), so applying the price-scaled nudge here too made small real
++    // trades move by a hidden, price-level-dependent amount the admin preview never showed.
++    if (isNpcOrder) {
++      price = enforceImmediateDirectionalMove(payload, state.lastPrice, price);
++      price = this.priceEngine.clampPrice(price, state.startPrice);
++    }
+     const { roundHigh, roundLow } = updateRoundStats(nextState, price);
+ 
+     nextState.lastPrice = price;
+@@ -224,7 +234,10 @@ export class MarketStateService {
+     return {
+       applied: true,
+       volumeScale: tradeVolumeNotional,
+-      deltaPips: result.deltaPips,
++      deltaPips: Math.round(((price - state.lastPrice) / PRICE_PIP_SIZE) * 10000) / 10000,
++      formulaPips: isNpcOrder ? null : result.deltaPips,
++      priceBefore: state.lastPrice,
++      priceAfter: price,
+       isNpcOrder,
+       tradeAmount: Number(payload.amount ?? 0),
+       tradeSide: payload.side,
+diff --git a/packages/shared/src/battle/price-audit-replay.ts b/packages/shared/src/battle/price-audit-replay.ts
+index 2ff9067..f72e62d 100644
+--- a/packages/shared/src/battle/price-audit-replay.ts
++++ b/packages/shared/src/battle/price-audit-replay.ts
+@@ -1,6 +1,7 @@
+ import { DEFAULT_PIP_IMPACT_CONFIG, type PipImpactConfigValue } from '../events/pip-impact-config.redis';
+ import { computePriceFromImbalance, type PriceFromImbalanceInput } from './price-from-imbalance';
+ import { clampPrice, computeTradeFlowInfluence, enforceImmediateDirectionalMove } from './price-post-process';
++import { PRICE_PIP_SIZE } from './pip-size';
+ import type { TradeExecutedV1 } from '../events/trade-executed.v1';
+ 
+ const DEFAULT_BATTLE_FREEZE_SECONDS = 10;
+@@ -227,8 +228,13 @@ export function replayBattlePricing(
+         const result = computePriceFromImbalance(priceEngineInput);
+ 
+         let price = clampPrice(result.price, input.startPrice);
+-        price = enforceImmediateDirectionalMove(payload, lastPrice, price);
+-        price = clampPrice(price, input.startPrice);
++        // Mirrors the live engine: the post-clamp directional nudge only applies to NPC
++        // (market-pressure) ticks. Real-user trades already moved deterministically, with
++        // their own one-quote-tick floor, inside computePriceFromImbalance.
++        if (trade.isNpc) {
++            price = enforceImmediateDirectionalMove(payload, lastPrice, price);
++            price = clampPrice(price, input.startPrice);
++        }
+ 
+         const priceBefore = lastPrice;
+         ticks.push({
+@@ -240,7 +246,8 @@ export function replayBattlePricing(
+             isFinalize,
+             priceBefore,
+             priceAfter: price,
+-            deltaPips: result.deltaPips,
++            // Realised move on the 5-decimal quote (flat 0.0001 pips), same unit the live log uses.
++            deltaPips: Math.round(((price - priceBefore) / PRICE_PIP_SIZE) * 10000) / 10000,
+             timestampMs: trade.createdAt.getTime(),
+         });
+ 
+diff --git a/packages/shared/src/battle/price-from-imbalance.ts b/packages/shared/src/battle/price-from-imbalance.ts
+index 7c32846..1bdfc57 100644
+--- a/packages/shared/src/battle/price-from-imbalance.ts
++++ b/packages/shared/src/battle/price-from-imbalance.ts
+@@ -230,6 +230,14 @@ const PRICE_MAX_DIRECTIONAL_PIPS = Number(
+  * when a round's price and its Buy/Sell bar appear to disagree.
+  */
+ const PRICE_DEBUG_TRACE = process.env.PRICE_DEBUG_TRACE === '1';
++/**
++ * Smallest step the 5-decimal quote can show (0.00001 = 0.1 pip). A real-user trade whose
++ * formula move is smaller than this still registers as one quote tick in its own direction,
++ * so the trader always sees the order land — deterministically, at every price level.
++ */
++export const PRICE_QUOTE_TICK = 0.00001;
++/** The sensitivity value at which the admin factor is exactly 1 (sensitivity / this). */
++export { PRICE_SENSITIVITY_DEFAULT };
+ 
+ export interface PriceFromImbalanceInput {
+     lastPrice: number;
+@@ -496,7 +504,7 @@ export function startPipImpactRoundOverridePolling(
+ }
+ 
+ 
+-function computePipImpactFromAmount(
++export function computePipImpactFromAmount(
+     tradeAmount: number,
+     config: PipImpactConfig,
+ ): number {
+@@ -653,45 +661,99 @@ function resolveNpcPipDampeningFactor(): number {
+  * price-level scaling, so Execution must not introduce any either, or an identical
+  * trade would produce a different pip count depending on the round's price level.
+  */
++/**
++ * Formula-only pips for a real-user trade: curve(amount) × (sensitivity / 5) × multiplier.
++ * Pure — no round state, no price level. Shared by the engine, the admin preview and the
++ * Live Trade Log so all three always quote the same number.
++ */
++export function computeDeterministicPips(
++    tradeAmount: number,
++    config: PipImpactConfig,
++    sensitivity?: number,
++): number {
++    const amt = typeof tradeAmount === 'number' && Number.isFinite(tradeAmount) ? Math.max(0, tradeAmount) : 0;
++    if (amt <= 0) return 0;
++    const rawSens =
++        typeof sensitivity === 'number' && Number.isFinite(sensitivity)
++            ? sensitivity
++            : config.sensitivity ?? PRICE_SENSITIVITY_DEFAULT;
++    const sens = Math.min(10, Math.max(1, Math.round(Number.isFinite(rawSens) ? rawSens : PRICE_SENSITIVITY_DEFAULT)));
++    const adminMultiplier =
++        Number.isFinite(config.multiplier) && (config.multiplier as number) > 0 ? (config.multiplier as number) : 1;
++    return computePipImpactFromAmount(amt, config) * (sens / PRICE_SENSITIVITY_DEFAULT) * adminMultiplier;
++}
++
++export interface DeterministicImpactPreview {
++    /** Unrounded formula result (pips, unsigned). */
++    formulaPips: number;
++    /** Signed move the 5-decimal quote actually shows (pips), including the one-quote-tick floor. */
++    executedPips: number;
++    priceBefore: number;
++    priceAfter: number;
++    /** True when the formula move was below one quote tick and the floor applied. */
++    flooredToQuoteTick: boolean;
++}
++
++/**
++ * Exactly what the engine executes for a real-user trade, given the config and the price the
++ * trade lands on. Used by the engine (below), the admin preview endpoint and the Live Trade
++ * Log, so "preview" and "execution" are the same function call.
++ */
++export function previewDeterministicPriceImpact(params: {
++    tradeAmount: number;
++    side: 'BUY' | 'SELL';
++    lastPrice: number;
++    config: PipImpactConfig;
++    sensitivity?: number;
++}): DeterministicImpactPreview {
++    const formulaPips = computeDeterministicPips(params.tradeAmount, params.config, params.sensitivity);
++    const sign = params.side === 'BUY' ? 1 : -1;
++    const lastPrice = Number.isFinite(params.lastPrice) && params.lastPrice > 0 ? params.lastPrice : 1;
++    let priceAfter = parseFloat((lastPrice + sign * formulaPips * PRICE_PIP_SIZE).toFixed(5));
++    let flooredToQuoteTick = false;
++    if (formulaPips > 0 && priceAfter === lastPrice) {
++        priceAfter = parseFloat((lastPrice + sign * PRICE_QUOTE_TICK).toFixed(5));
++        flooredToQuoteTick = true;
++    }
++    const executedPips = Math.round(((priceAfter - lastPrice) / PRICE_PIP_SIZE) * 10000) / 10000;
++    return { formulaPips, executedPips, priceBefore: lastPrice, priceAfter, flooredToQuoteTick };
++}
++
+ function computeDeterministicPriceImpact(input: PriceFromImbalanceInput): PriceFromImbalanceResult {
+-    const { lastPrice, startPrice, pressureSmoothedPrev, tradeAmount, mandatoryTradeSide, sensitivity: sensitivityInput, pipImpactConfig: pipImpactConfigInput } = input;
++    const { lastPrice, pressureSmoothedPrev, tradeAmount, mandatoryTradeSide, sensitivity: sensitivityInput, pipImpactConfig: pipImpactConfigInput } = input;
+ 
+     const impactConfig = pipImpactConfigInput ?? getPipImpactConfig();
+     const sensitivity = resolveSensitivity(sensitivityInput);
+-    const expectedPips = computePipImpactFromAmount(tradeAmount as number, impactConfig);
+-    const sensitivityFactor = sensitivity / PRICE_SENSITIVITY_DEFAULT;
+-    const adminMultiplier =
+-        Number.isFinite(impactConfig.multiplier) && (impactConfig.multiplier as number) > 0
+-            ? (impactConfig.multiplier as number)
+-            : 1;
+-
+-    const magnitude = expectedPips * sensitivityFactor * adminMultiplier;
+-    const deltaPipsTotal = mandatoryTradeSide === 'BUY' ? magnitude : -magnitude;
++    const side: 'BUY' | 'SELL' = mandatoryTradeSide === 'BUY' ? 'BUY' : 'SELL';
++    const preview = previewDeterministicPriceImpact({
++        tradeAmount: tradeAmount as number,
++        side,
++        lastPrice,
++        config: impactConfig,
++        sensitivity,
++    });
++    const deltaPipsTotal = side === 'BUY' ? preview.formulaPips : -preview.formulaPips;
+ 
+     if (PRICE_DEBUG_TRACE) {
+         console.log(
+             JSON.stringify({
+-                side: mandatoryTradeSide,
++                side,
+                 amt: tradeAmount,
+                 deterministic: true,
+-                expectedPips: +expectedPips.toFixed(4),
+                 sensitivity,
+-                multiplier: adminMultiplier,
+-                finalPips: +deltaPipsTotal.toFixed(4),
++                multiplier: impactConfig.multiplier ?? 1,
++                formulaPips: +deltaPipsTotal.toFixed(4),
++                executedPips: preview.executedPips,
++                flooredToQuoteTick: preview.flooredToQuoteTick,
+             }),
+         );
+     }
+ 
+-    const priceDelta = deltaPipsTotal * PRICE_PIP_SIZE;
+-    const priceRounded = parseFloat((lastPrice + priceDelta).toFixed(5));
+-    const priceChange = priceRounded - lastPrice;
+-    const volumeScale = Math.abs(deltaPipsTotal);
+-
+     return {
+-        price: priceRounded,
+-        priceChange,
++        price: preview.priceAfter,
++        priceChange: preview.priceAfter - lastPrice,
+         deltaPips: deltaPipsTotal,
+-        volumeScale,
++        volumeScale: Math.abs(deltaPipsTotal),
+         pressureSmoothed: pressureSmoothedPrev,
+     };
+ }
+diff --git a/packages/shared/src/battle/price-impact-deterministic.spec.ts b/packages/shared/src/battle/price-impact-deterministic.spec.ts
+new file mode 100644
+index 0000000..0886802
+--- /dev/null
++++ b/packages/shared/src/battle/price-impact-deterministic.spec.ts
+@@ -0,0 +1,98 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import {
++    computePriceFromImbalance,
++    computeDeterministicPips,
++    previewDeterministicPriceImpact,
++    PRICE_PIP_SIZE,
++    PRICE_QUOTE_TICK,
++    type PipImpactConfig,
++} from './price-from-imbalance';
++import { replayBattlePricing } from './price-audit-replay';
++
++/** The developer's own test case: $100k, linear, $1M → 10 pips, sensitivity 8, multiplier 10. */
++const DEV_CONFIG: PipImpactConfig & { sensitivity: number; multiplier: number } = { referenceAmount: 1_000_000, referencePips: 10, curve: 'linear', sensitivity: 8, multiplier: 10 };
++
++function realTrade(amount: number, side: 'BUY' | 'SELL', lastPrice: number, config = DEV_CONFIG, extra: Record<string, unknown> = {}) {
++    return computePriceFromImbalance({
++        lastPrice,
++        buyPot: side === 'BUY' ? 500_000 + amount : 500_000,
++        sellPot: side === 'SELL' ? 500_000 + amount : 500_000,
++        startPrice: lastPrice,
++        pressureSmoothedPrev: 0.4,
++        elapsedFraction: 0.5,
++        isFinalize: false,
++        tradeAmount: amount,
++        mandatoryTradeSide: side,
++        isNpcOrder: false,
++        pipImpactConfig: config,
++        sensitivity: config.sensitivity,
++        ...extra,
++    });
++}
++
++test('formula: $100k linear with sensitivity 8 and multiplier 10 is exactly 16.0 pips', () => {
++    assert.equal(computeDeterministicPips(100_000, DEV_CONFIG), 16);
++    const r = realTrade(100_000, 'SELL', 1.42938);
++    assert.equal(r.price, 1.42778);
++    assert.equal(Math.round((r.price - 1.42938) / PRICE_PIP_SIZE * 10000) / 10000, -16);
++});
++
++test('the same trade moves the same number of pips at any price level (no price scaling)', () => {
++    for (const p of [0.9, 1.0, 1.25, 1.42938, 1.72, 4.5]) {
++        const r = realTrade(100_000, 'BUY', p);
++        assert.equal(Math.round((r.price - p) / PRICE_PIP_SIZE * 10000) / 10000, 16, `at ${p}`);
++    }
++});
++
++test('round state (pots, pressure, elapsed, finalize) has no effect on a real trade', () => {
++    const base = realTrade(50_000, 'BUY', 1.25);
++    const skewed = realTrade(50_000, 'BUY', 1.25, DEV_CONFIG, { buyPot: 10, sellPot: 900_000, pressureSmoothedPrev: -0.9, elapsedFraction: 0.99, isFinalize: true });
++    assert.equal(skewed.price, base.price);
++    assert.equal(skewed.pressureSmoothed, -0.9, 'pressure passes through untouched');
++});
++
++test('a trade below one quote tick still registers exactly one tick (0.1 pip) in its own direction', () => {
++    // $10 × linear → 0.016 pips: rounds to zero on a 5-decimal quote.
++    const p = previewDeterministicPriceImpact({ tradeAmount: 10, side: 'SELL', lastPrice: 1.25416, config: DEV_CONFIG });
++    assert.ok(p.formulaPips < 0.1);
++    assert.equal(p.flooredToQuoteTick, true);
++    assert.equal(p.executedPips, -0.1);
++    assert.equal(p.priceAfter, Number((1.25416 - PRICE_QUOTE_TICK).toFixed(5)));
++    const r = realTrade(10, 'SELL', 1.25416);
++    assert.equal(r.price, p.priceAfter);
++    // Independent of the book skew that used to drive the hidden nudge.
++    const r2 = realTrade(10, 'SELL', 1.25416, DEV_CONFIG, { buyPot: 1_000, sellPot: 900_000 });
++    assert.equal(r2.price, p.priceAfter);
++});
++
++test('a zero-amount trade moves nothing', () => {
++    const p = previewDeterministicPriceImpact({ tradeAmount: 0, side: 'BUY', lastPrice: 1.25, config: DEV_CONFIG });
++    assert.equal(p.executedPips, 0);
++    assert.equal(p.flooredToQuoteTick, false);
++});
++
++test('sensitivity factor is sensitivity ÷ 5 and the per-round value overrides the config', () => {
++    assert.equal(computeDeterministicPips(100_000, DEV_CONFIG, 4), 8);
++    assert.equal(computeDeterministicPips(100_000, { ...DEV_CONFIG, sensitivity: 5 }), 10);
++    assert.equal(computeDeterministicPips(100_000, { ...DEV_CONFIG, sensitivity: 5, multiplier: 1 }), 1);
++});
++
++test('curves: sqrt and log agree with the documented formulas', () => {
++    const sqrtCfg = { ...DEV_CONFIG, curve: 'sqrt' as const, sensitivity: 5, multiplier: 1 };
++    assert.ok(Math.abs(computeDeterministicPips(250_000, sqrtCfg) - 10 * Math.sqrt(0.25)) < 1e-9);
++    const logCfg = { ...DEV_CONFIG, curve: 'log' as const, sensitivity: 5, multiplier: 1 };
++    assert.ok(Math.abs(computeDeterministicPips(100_000, logCfg) - 10 * (Math.log10(1 + 100_000) / Math.log10(1 + 1_000_000))) < 1e-9);
++});
++
++test('replay of real trades reproduces the deterministic move exactly (no post-clamp nudge)', () => {
++    const start = new Date('2026-01-01T00:00:00Z');
++    const trades = [
++        { id: 'a', userId: 1, side: 'SELL' as const, amount: 20_000, quantity: 1, entryPrice: null, createdAt: new Date(start.getTime() + 1000), isNpc: false },
++        { id: 'b', userId: 1, side: 'SELL' as const, amount: 10, quantity: 1, entryPrice: null, createdAt: new Date(start.getTime() + 2000), isNpc: false },
++        { id: 'c', userId: 1, side: 'BUY' as const, amount: 100_000, quantity: 1, entryPrice: null, createdAt: new Date(start.getTime() + 3000), isNpc: false },
++    ];
++    const r = replayBattlePricing({ battleId: 1, startPrice: 1.25544, durationSeconds: 300, startTime: start, trades }, DEV_CONFIG, 10);
++    assert.deepEqual(r.ticks.map((t) => t.deltaPips), [-3.2, -0.1, 16]);
++    assert.equal(r.expectedEndPrice, Number((1.25544 - 0.00032 - 0.00001 + 0.0016).toFixed(5)));
++});
+diff --git a/packages/shared/src/events/index.ts b/packages/shared/src/events/index.ts
+index 44d9120..590694e 100644
+--- a/packages/shared/src/events/index.ts
++++ b/packages/shared/src/events/index.ts
+@@ -9,3 +9,4 @@ export * from './config-updated.v1';
+ export * from './npc-simulator.redis';
+ export * from './market-state.redis';
+ export * from './pip-impact-config.redis';
++export * from './trade-priced.v1';
+diff --git a/packages/shared/src/events/pip-impact-config.redis.ts b/packages/shared/src/events/pip-impact-config.redis.ts
+index ea455d8..f779b89 100644
+--- a/packages/shared/src/events/pip-impact-config.redis.ts
++++ b/packages/shared/src/events/pip-impact-config.redis.ts
+@@ -43,6 +43,32 @@ export const DEFAULT_PIP_IMPACT_ROUND_OVERRIDE: PipImpactRoundOverrideValue = {
+     sensitivity: 5,
+ };
+ 
++/**
++ * Pub/sub push sent by the API on every save so the engine applies a change the moment it is
++ * saved instead of at its next poll (the pollers stay as the fallback).
++ */
++export const PIP_IMPACT_CONFIG_CHANNEL = 'engine:events:market.sensitivity.v1';
++
++export interface PipImpactConfigPushV1 {
++    config?: PipImpactConfigValue;
++    roundOverride?: PipImpactRoundOverrideValue;
++    timestamp: number;
++}
++
++/**
++ * Effective config a round was actually priced with, written by the engine leader when the
++ * round closes (before the per-round override is cleared) and read by settlement — which runs
++ * in another process that never loads the live config — for the Price Movement Audit snapshot.
++ */
++export interface PipImpactConfigUsedValue extends PipImpactConfigValue {
++    roundOverrideApplied: boolean;
++    recordedAt: number;
++}
++export function pipImpactUsedKey(battleId: number): string {
++    return `ticktrade:market:pip_impact_used:${battleId}`;
++}
++export const PIP_IMPACT_USED_TTL_SECONDS = 6 * 60 * 60;
++
+ export type PipImpactConfigRedisGetter = (
+     key: string,
+ ) => Promise<string | null | undefined>;
+@@ -90,6 +116,38 @@ function parseRoundOverride(raw: string | null | undefined): PipImpactRoundOverr
+     }
+ }
+ 
++export function parsePipImpactConfigPush(raw: string | null | undefined): PipImpactConfigPushV1 | null {
++    if (!raw) return null;
++    try {
++        const parsed = JSON.parse(raw) as { config?: unknown; roundOverride?: unknown; timestamp?: unknown };
++        const out: PipImpactConfigPushV1 = { timestamp: Number(parsed.timestamp) || Date.now() };
++        if (parsed.config != null && typeof parsed.config === 'object') {
++            out.config = parseConfig(JSON.stringify(parsed.config));
++        }
++        if (parsed.roundOverride != null && typeof parsed.roundOverride === 'object') {
++            out.roundOverride = parseRoundOverride(JSON.stringify(parsed.roundOverride));
++        }
++        return out;
++    } catch {
++        return null;
++    }
++}
++
++export function parsePipImpactConfigUsed(raw: string | null | undefined): PipImpactConfigUsedValue | null {
++    if (!raw) return null;
++    try {
++        const parsed = JSON.parse(raw) as Record<string, unknown>;
++        const base = parseConfig(raw);
++        return {
++            ...base,
++            roundOverrideApplied: parsed.roundOverrideApplied === true,
++            recordedAt: Number(parsed.recordedAt) || 0,
++        };
++    } catch {
++        return null;
++    }
++}
++
+ const CACHE_TTL_MS = Math.max(
+     50,
+     Number.parseInt(process.env.PIP_IMPACT_CONFIG_CACHE_TTL_MS ?? '2000', 10) || 2000,
+diff --git a/packages/shared/src/events/trade-priced.v1.ts b/packages/shared/src/events/trade-priced.v1.ts
+new file mode 100644
+index 0000000..6a9d20e
+--- /dev/null
++++ b/packages/shared/src/events/trade-priced.v1.ts
+@@ -0,0 +1,27 @@
++/**
++ * Event: one executed trade has been priced by the engine (engine → API).
++ *
++ * Published for EVERY priced trade, real and NPC, independently of the coalesced
++ * `engine:events:price.tick` fan-out — so the admin Live Trade Log and the price-tick
++ * audit table never miss a trade that landed inside the coalescing window.
++ */
++export const TRADE_PRICED_CHANNEL = 'engine:events:trade.priced.v1';
++
++export interface TradePricedV1 {
++    eventId: string;
++    battleId: number;
++    /** 0 for NPC trades. */
++    userId: number;
++    source: 'real' | 'npc';
++    side: 'BUY' | 'SELL';
++    amount: number;
++    priceBefore: number;
++    priceAfter: number;
++    /** Realised move on the 5-decimal quote, in flat 0.0001 pips (signed). */
++    deltaPips: number;
++    /** Real trades only: the admin formula's unrounded pips (signed); null for NPC trades. */
++    formulaPips: number | null;
++    /** Real trades only: true when the formula move was below one quote tick and the 0.1-pip floor applied. */
++    flooredToQuoteTick: boolean;
++    timestamp: number;
++}
+diff --git a/packages/shared/src/index.ts b/packages/shared/src/index.ts
+index e0298ef..3093970 100644
+--- a/packages/shared/src/index.ts
++++ b/packages/shared/src/index.ts
+@@ -85,7 +85,14 @@ export {
+     type PriceFromImbalanceResult,
+     type PipImpactConfig,
+     type PipImpactRoundOverride,
++    PRICE_QUOTE_TICK,
++    PRICE_SENSITIVITY_DEFAULT,
++    computePipImpactFromAmount,
++    computeDeterministicPips,
++    previewDeterministicPriceImpact,
++    type DeterministicImpactPreview,
+ } from './battle/price-from-imbalance';
+ export * from './battle/price-post-process';
+-export * from './battle/price-audit-replay';export * from './npc-organic';
++export * from './battle/price-audit-replay';
++export * from './npc-organic';
+ 
+-- 
+2.43.0
+

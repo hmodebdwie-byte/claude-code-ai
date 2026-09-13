@@ -1,0 +1,1213 @@
+From 87872d205ae952873da68196e841bf976c11ffce Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 13 Sep 2026 23:45:53 +0000
+Subject: [PATCH] feat(market-sensitivity): exact previews, editable reference
+ fields, complete live log, working filters
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+* Live Preview shows both the settings on the page (including unsaved edits) and what the
+  engine executes right now (new preview endpoint, live price, effective sensitivity):
+  formula pips, the move the 5-decimal quote actually shows (one-quote-tick floor noted),
+  price before → after, BUY/SELL toggle.
+* Reference Amount and Reference Pips are editable (they anchor the curve); the banner
+  states the exact formula; saves are pushed to the engine immediately.
+* Per-round override input is clamped to 1–10 and the toggle follows the automatic clear
+  at round end (polled).
+* Live Trade Log: formula vs actual per real trade with a mismatch marker, round total
+  measured on the price (start → now), real / NPC / other split, trade counts, the
+  sensitivity in force.
+* Change-log Search, Date Range and Field filters now query the server (the date range
+  did nothing before, and search/field only filtered the current page); CURVE and
+  REFERENCE options added.
+* Price Movement Audit: Pass/Fail filter and the metrics come from the server for the
+  whole period; the MULTIPLIER column shows the Market Sensitivity multiplier that priced
+  the round (it showed the event multiplier) with a marker when a per-round override was
+  active.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Dzk243ADEkJuWxdHGG3hNv
+---
+ .../AdminDashboard/MarketSensitivity.jsx      | 678 ++++++++++--------
+ src/Pages/PriceMovementAudit/index.jsx        |  51 +-
+ src/store/slices/adminSlice.js                |  12 +-
+ 3 files changed, 423 insertions(+), 318 deletions(-)
+
+diff --git a/src/Pages/AdminDashboard/MarketSensitivity.jsx b/src/Pages/AdminDashboard/MarketSensitivity.jsx
+index ff87572..66ec2ec 100644
+--- a/src/Pages/AdminDashboard/MarketSensitivity.jsx
++++ b/src/Pages/AdminDashboard/MarketSensitivity.jsx
+@@ -1,8 +1,9 @@
+-import React, { useState, useMemo, useEffect } from 'react';
++import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+ import { useSelector, useDispatch } from 'react-redux';
+ import { toast } from 'react-toastify';
+ import DateRangeDropdown from '../../components/DateRangeDropdown';
+ import Pagination from '../../components/Pagination';
++import axiosInstance from '../../utils/axios';
+ import {
+   fetchMarketSensitivity,
+   updateMarketSensitivity,
+@@ -14,11 +15,61 @@ import {
+ import { PermissionGate } from '../../hooks/usePermission';
+ import './MarketSensitivity.css';
+ 
++/** One pip on the 5-decimal quote. */
++const PIP_SIZE = 0.0001;
++/** Smallest step the quote can show (0.1 pip) — the engine's floor for a real trade whose formula move is smaller. */
++const QUOTE_TICK = 0.00001;
++const OVERRIDE_POLL_MS = 5000;
++const LIVE_LOG_POLL_MS = 4000;
++const PREVIEW_POLL_MS = 5000;
++
++const authHeaders = () => ({ Authorization: localStorage.getItem('token'), 'Content-Type': 'application/json' });
++
++/**
++ * Same maths as the engine's `computeDeterministicPips` + `previewDeterministicPriceImpact`
++ * (packages/shared/src/battle/price-from-imbalance.ts): curve(amount) × (sensitivity / default) × multiplier,
++ * then rounded to the 5-decimal quote with a one-quote-tick floor. Used for the "unsaved settings"
++ * what-if; the "engine now" figure next to it comes from the API running the real function.
++ */
++function formulaPips({ amount, referenceAmount, referencePips, curve, sensitivity, multiplier, defaultSensitivity }) {
++  const amt = Math.max(0, Number(amount) || 0);
++  if (amt <= 0) return 0;
++  const refAmt = Math.max(1, Number(referenceAmount) || 1);
++  const refPips = Math.max(0.0001, Number(referencePips) || 0.0001);
++  const ratio = amt / refAmt;
++  let expected;
++  if (curve === 'linear') expected = refPips * ratio;
++  else if (curve === 'sqrt') expected = refPips * Math.sqrt(ratio);
++  else expected = refPips * (Math.log10(1 + amt) / Math.log10(1 + refAmt));
++  const sens = Math.min(10, Math.max(1, Math.round(Number(sensitivity) || 1)));
++  const mult = Math.max(0.1, Number(multiplier) || 1);
++  return expected * (sens / (Number(defaultSensitivity) || 5)) * mult;
++}
++
++function executedMove(pips, side, lastPrice) {
++  const price = Number(lastPrice) > 0 ? Number(lastPrice) : 1.25;
++  const sign = side === 'SELL' ? -1 : 1;
++  let after = parseFloat((price + sign * pips * PIP_SIZE).toFixed(5));
++  let floored = false;
++  if (pips > 0 && after === price) {
++    after = parseFloat((price + sign * QUOTE_TICK).toFixed(5));
++    floored = true;
++  }
++  const executedPips = Math.round(((after - price) / PIP_SIZE) * 10000) / 10000;
++  return { before: price, after, executedPips, floored };
++}
++
++const fmtPips = (v, digits = 2) => {
++  const n = Number(v);
++  if (!Number.isFinite(n)) return '—';
++  return `${n > 0 ? '+' : ''}${n.toFixed(digits)}`;
++};
++const fmtPrice = (v) => (Number.isFinite(Number(v)) ? Number(v).toFixed(5) : '—');
++
+ const MarketSensitivity = () => {
+   const dispatch = useDispatch();
+   const {
+     marketSensitivity,
+-    marketSensitivityLoading,
+     updateMarketSensitivityLoading,
+     marketSensitivityRoundOverride,
+     marketSensitivityChangeLog,
+@@ -29,117 +80,174 @@ const MarketSensitivity = () => {
+     liveTradeLogLoading,
+   } = useSelector((state) => state.admin);
+ 
+-  // Stepper & Config State (seeded from backend once loaded, then edited locally until Save)
+-  const [sensitivity, setSensitivity] = useState(1.0);
++  // Editable config (seeded from the backend, edited locally until Save)
++  const [sensitivity, setSensitivity] = useState(5);
+   const [multiplier, setMultiplier] = useState(1.0);
+   const [curve, setCurve] = useState('log');
+-  const [referenceAmount, setReferenceAmount] = useState(1000000);
+-  // Not an editable field in this UI (see mock-mapping decision), but the live preview needs
+-  // the real configured value instead of a hardcoded placeholder — seeded read-only below.
+-  const [referencePips, setReferencePips] = useState(10);
++  const [referenceAmount, setReferenceAmount] = useState('1000000');
++  const [referencePips, setReferencePips] = useState('10');
+   const [overrideEnabled, setOverrideEnabled] = useState(false);
+-  const [overrideValue, setOverrideValue] = useState(0.0);
++  const [overrideValue, setOverrideValue] = useState(5);
+   const [testVolume, setTestVolume] = useState('100000');
++  const [previewSide, setPreviewSide] = useState('BUY');
++  const [serverPreview, setServerPreview] = useState(null);
++  const [serverPreviewError, setServerPreviewError] = useState(null);
+ 
+-  // Table Filters State
++  // Change-log filters (all applied server-side)
+   const [searchQuery, setSearchQuery] = useState('');
++  const [debouncedSearch, setDebouncedSearch] = useState('');
+   const [fieldFilter, setFieldFilter] = useState('All');
+   const [dateRange, setDateRange] = useState(null);
+   const [page, setPage] = useState(1);
+   const limit = 5;
+ 
++  const defaultSensitivity = Number(marketSensitivity?.defaultSensitivity) || 5;
++
+   useEffect(() => {
+     dispatch(fetchMarketSensitivity());
+     dispatch(fetchMarketSensitivityRoundOverride());
+   }, [dispatch]);
+ 
+-  // Live Trade Log — polls the active battle's per-trade price-impact breakdown so an
+-  // admin can see, without disabling the NPC simulator to test, how much of a round's
+-  // total movement came from real-user trades (deterministic formula) vs NPC trades
+-  // (market-pressure model).
++  // The per-round override clears itself when the round ends; keep the toggle honest.
+   useEffect(() => {
+-    dispatch(fetchLiveTradeLog());
+-    const interval = setInterval(() => dispatch(fetchLiveTradeLog()), 4000);
+-    return () => clearInterval(interval);
++    const id = setInterval(() => dispatch(fetchMarketSensitivityRoundOverride()), OVERRIDE_POLL_MS);
++    return () => clearInterval(id);
+   }, [dispatch]);
+ 
+   useEffect(() => {
+-    dispatch(fetchMarketSensitivityChangeLog({ page, limit }));
+-  }, [dispatch, page]);
++    dispatch(fetchLiveTradeLog());
++    const interval = setInterval(() => dispatch(fetchLiveTradeLog()), LIVE_LOG_POLL_MS);
++    return () => clearInterval(interval);
++  }, [dispatch]);
+ 
+-  // Seed local editable state once the real config loads
+   useEffect(() => {
+-    if (marketSensitivity) {
+-      setSensitivity(Number(marketSensitivity.sensitivity ?? 1));
+-      setMultiplier(Number(marketSensitivity.multiplier ?? 1));
+-      setCurve(marketSensitivity.curve || 'log');
+-      setReferenceAmount(Number(marketSensitivity.referenceAmount ?? 1000000));
+-      setReferencePips(Number(marketSensitivity.referencePips ?? 10));
++    const id = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 350);
++    return () => clearTimeout(id);
++  }, [searchQuery]);
++
++  const changeLogParams = useMemo(() => {
++    const params = { page, limit };
++    if (debouncedSearch) params.search = debouncedSearch;
++    if (fieldFilter && fieldFilter !== 'All') params.field = fieldFilter;
++    if (dateRange?.startDate) params.from = new Date(dateRange.startDate).toISOString();
++    if (dateRange?.endDate) {
++      const end = new Date(dateRange.endDate);
++      end.setHours(23, 59, 59, 999);
++      params.to = end.toISOString();
+     }
+-  }, [marketSensitivity]);
++    return params;
++  }, [page, limit, debouncedSearch, fieldFilter, dateRange]);
+ 
+   useEffect(() => {
+-    if (marketSensitivityRoundOverride) {
+-      setOverrideEnabled(!!marketSensitivityRoundOverride.enabled);
+-      setOverrideValue(Number(marketSensitivityRoundOverride.sensitivity ?? 0));
+-    }
+-  }, [marketSensitivityRoundOverride]);
+-
+-  // Stepper handlers
+-  // Sensitivity is engine-side integer 1-10 (Math.round + clamp) — the
+-  // stepper moves by whole numbers so what's shown always matches what
+-  // gets applied; a 0.1 step would let an admin save a value that silently
+-  // collapses to the nearest integer server-side with no feedback.
++    dispatch(fetchMarketSensitivityChangeLog(changeLogParams));
++  }, [dispatch, changeLogParams]);
++
++  const refreshChangeLog = useCallback(() => {
++    setPage(1);
++    dispatch(fetchMarketSensitivityChangeLog({ ...changeLogParams, page: 1 }));
++  }, [dispatch, changeLogParams]);
++
++  // Seed the editable fields from the backend config whenever a new config object arrives
++  // (state adjusted during render, per the React guidance, so no effect-driven re-render).
++  const [seededConfig, setSeededConfig] = useState(null);
++  if (marketSensitivity && marketSensitivity !== seededConfig) {
++    setSeededConfig(marketSensitivity);
++    setSensitivity(Number(marketSensitivity.sensitivity ?? 5));
++    setMultiplier(Number(marketSensitivity.multiplier ?? 1));
++    setCurve(marketSensitivity.curve || 'log');
++    setReferenceAmount(String(marketSensitivity.referenceAmount ?? 1000000));
++    setReferencePips(String(marketSensitivity.referencePips ?? 10));
++  }
++  const [seededOverride, setSeededOverride] = useState(null);
++  if (marketSensitivityRoundOverride && marketSensitivityRoundOverride !== seededOverride) {
++    setSeededOverride(marketSensitivityRoundOverride);
++    setOverrideEnabled(!!marketSensitivityRoundOverride.enabled);
++    setOverrideValue(Math.min(10, Math.max(1, Number(marketSensitivityRoundOverride.sensitivity) || 5)));
++  }
++
++  // Steppers: sensitivity is an engine-side integer 1-10, multiplier a 0.1-step decimal
+   const handleSensitivityChange = (delta) => {
+     setSensitivity((prev) => Math.max(1, Math.min(10, Math.round(prev + delta))));
+   };
+-
+   const handleMultiplierChange = (delta) => {
+-    setMultiplier((prev) => Math.max(0.1, parseFloat((prev + delta).toFixed(1))));
++    setMultiplier((prev) => Math.max(0.1, Math.min(10, parseFloat((prev + delta).toFixed(1)))));
+   };
+ 
+-  // Live Projected Impact Calculation — for a real-user trade, this now IS the full
+-  // engine output, not just a floor/ceiling around a separate market-pressure model.
+-  // Mirrors price-from-imbalance.ts's computeDeterministicPriceImpact exactly:
+-  // computePipImpactFromAmount (curve formula) x sensitivity-factor x admin multiplier.
+-  // No dampener, no minPips floor, no market-pressure term, and no price-level pip-size
+-  // scaling — real-user trades in Arena mode use a flat, constant pip size always, so
+-  // this preview and the executed move must always match exactly, at any round price.
+-  const DEFAULT_SENSITIVITY = 5;
+-
+-  const projectedPips = useMemo(() => {
+-    const refAmt = Math.max(1, referenceAmount);
+-    const refPips = Math.max(0.0001, referencePips);
+-    const amt = Math.max(0, Number(testVolume) || 0);
+-    const ratio = amt / refAmt;
+-
+-    let expectedPips;
+-    if (amt <= 0) expectedPips = 0;
+-    else if (curve === 'linear') expectedPips = refPips * ratio;
+-    else if (curve === 'sqrt') expectedPips = refPips * Math.sqrt(ratio);
+-    else expectedPips = refPips * (Math.log10(1 + amt) / Math.log10(1 + refAmt));
+-
+-    const sensitivityFactor = sensitivity / DEFAULT_SENSITIVITY;
+-    const pips = expectedPips * sensitivityFactor * Math.max(0.1, multiplier);
+-
+-    return pips.toFixed(2);
+-  }, [testVolume, sensitivity, multiplier, curve, referenceAmount, referencePips]);
+-
+-  // Save Configuration
++  // ---- Engine preview (saved settings, live price, effective sensitivity) --------------------------
++  const previewTimer = useRef(null);
++  const loadServerPreview = useCallback(async () => {
++    const amount = Math.max(0, Number(testVolume) || 0);
++    try {
++      const res = await axiosInstance.get('/admin/market-sensitivity/preview', {
++        params: { amount, side: previewSide },
++        headers: authHeaders(),
++      });
++      setServerPreview(res.data?.data ?? null);
++      setServerPreviewError(null);
++    } catch (err) {
++      setServerPreviewError(err?.response?.data?.message || 'Preview unavailable');
++    }
++  }, [testVolume, previewSide]);
++
++  useEffect(() => {
++    clearTimeout(previewTimer.current);
++    previewTimer.current = setTimeout(loadServerPreview, 300);
++    const poll = setInterval(loadServerPreview, PREVIEW_POLL_MS);
++    return () => {
++      clearTimeout(previewTimer.current);
++      clearInterval(poll);
++    };
++  }, [loadServerPreview]);
++
++  // ---- What-if with the settings shown on this page (may be unsaved) -------------------------------
++  const localPreview = useMemo(() => {
++    const pips = formulaPips({
++      amount: testVolume,
++      referenceAmount,
++      referencePips,
++      curve,
++      sensitivity: overrideEnabled ? overrideValue : sensitivity,
++      multiplier,
++      defaultSensitivity,
++    });
++    const lastPrice = serverPreview?.price_before ?? 1.25;
++    return { pips, ...executedMove(pips, previewSide, lastPrice) };
++  }, [testVolume, referenceAmount, referencePips, curve, sensitivity, multiplier, overrideEnabled, overrideValue, defaultSensitivity, previewSide, serverPreview]);
++
++  const unsaved =
++    marketSensitivity &&
++    (Number(marketSensitivity.sensitivity) !== sensitivity ||
++      Number(marketSensitivity.multiplier) !== multiplier ||
++      (marketSensitivity.curve || 'log') !== curve ||
++      Number(marketSensitivity.referenceAmount) !== Number(referenceAmount) ||
++      Number(marketSensitivity.referencePips) !== Number(referencePips));
++
++  // ---- Save / override -----------------------------------------------------------------------------
+   const handleSaveConfig = () => {
++    const refAmt = Number(referenceAmount);
++    const refPips = Number(referencePips);
++    if (!Number.isFinite(refAmt) || refAmt <= 0) {
++      toast.error('Reference amount must be a positive number');
++      return;
++    }
++    if (!Number.isFinite(refPips) || refPips < 0) {
++      toast.error('Reference pips must be zero or more');
++      return;
++    }
+     dispatch(
+       updateMarketSensitivity({
+         sensitivity,
+         multiplier,
+         curve,
+-        referenceAmount,
++        referenceAmount: refAmt,
++        referencePips: refPips,
+       }),
+     )
+       .unwrap()
+       .then(() => {
+-        toast.success('Market Sensitivity configuration saved! Changes take effect live within a few seconds.');
+-        dispatch(fetchMarketSensitivityChangeLog({ page: 1, limit }));
+-        setPage(1);
++        toast.success('Market Sensitivity saved and pushed to the engine — the next trade already uses it.');
++        refreshChangeLog();
++        loadServerPreview();
+       })
+       .catch((err) => {
+         toast.error(err || 'Failed to save Market Sensitivity configuration');
+@@ -148,12 +256,13 @@ const MarketSensitivity = () => {
+ 
+   const handleOverrideToggle = (checked) => {
+     setOverrideEnabled(checked);
+-    dispatch(setMarketSensitivityRoundOverride({ enabled: checked, sensitivity: overrideValue }))
++    const value = Math.min(10, Math.max(1, Number(overrideValue) || 5));
++    dispatch(setMarketSensitivityRoundOverride({ enabled: checked, sensitivity: value }))
+       .unwrap()
+       .then(() => {
+-        toast.success(checked ? 'Per-round override enabled for the current round.' : 'Per-round override cleared.');
+-        dispatch(fetchMarketSensitivityChangeLog({ page: 1, limit }));
+-        setPage(1);
++        toast.success(checked ? `Per-round override enabled (sensitivity ${value}) for the current round.` : 'Per-round override cleared.');
++        refreshChangeLog();
++        loadServerPreview();
+       })
+       .catch((err) => {
+         toast.error(err || 'Failed to update round override');
+@@ -163,32 +272,28 @@ const MarketSensitivity = () => {
+ 
+   const handleOverrideValueCommit = () => {
+     if (!overrideEnabled) return;
+-    dispatch(setMarketSensitivityRoundOverride({ enabled: true, sensitivity: overrideValue }))
++    const value = Math.min(10, Math.max(1, Number(overrideValue) || 5));
++    setOverrideValue(value);
++    dispatch(setMarketSensitivityRoundOverride({ enabled: true, sensitivity: value }))
+       .unwrap()
+       .then(() => {
+         toast.success('Round override value updated.');
+-        dispatch(fetchMarketSensitivityChangeLog({ page: 1, limit }));
+-        setPage(1);
++        refreshChangeLog();
++        loadServerPreview();
+       })
+       .catch((err) => toast.error(err || 'Failed to update round override'));
+   };
+ 
+-  // Filtered Logs (server-paginated; filter client-side within the current page like the rest of the UI expects)
+   const logs = marketSensitivityChangeLog || [];
+-  const filteredLogs = useMemo(() => {
+-    return logs.filter((log) => {
+-      const matchSearch =
+-        searchQuery === '' ||
+-        String(log.id).toLowerCase().includes(searchQuery.toLowerCase()) ||
+-        (log.changedBy || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+-        (log.field || '').toLowerCase().includes(searchQuery.toLowerCase());
+-      const matchField = fieldFilter === 'All' || (log.field || '').includes(fieldFilter);
+-      return matchSearch && matchField;
+-    });
+-  }, [logs, searchQuery, fieldFilter]);
+-
+   const totalPages = marketSensitivityChangeLogPagination?.totalPages || 1;
+-  const totalItems = marketSensitivityChangeLogPagination?.total || filteredLogs.length;
++  const totalItems = marketSensitivityChangeLogPagination?.total || logs.length;
++
++  const labelStyle = { fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: '10px' };
++  const stepperStyle = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0a0a0a', border: '1px solid #282828', borderRadius: '8px', padding: '10px 16px', marginBottom: '14px' };
++  const stepperBtn = { background: 'none', border: 'none', color: '#fff', fontSize: '20px', fontWeight: '700', cursor: 'pointer', padding: '0 8px' };
++  const inputStyle = { background: '#0a0a0a', border: '1px solid #282828', fontSize: '14px', fontWeight: '700', color: '#fff' };
++  const statBox = { background: '#0a0a0a', border: '1px solid #282828', borderRadius: 8, padding: '10px 16px' };
++  const statLabel = { fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block' };
+ 
+   return (
+     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+@@ -198,12 +303,12 @@ const MarketSensitivity = () => {
+         <div className="section-header" style={{ margin: 0 }}>
+           <h3 className="section-title" style={{ margin: 0 }}>Market Sensitivity & Price Impact Config</h3>
+           <p className="section-subtitle" style={{ marginTop: '5px', marginBottom: 0 }}>
+-            Configure global order flow volatility multipliers, per-round overrides, and inspect formula audit logs.
++            Configure how far a real-user trade moves the price, override it for one round, and audit every change.
+           </p>
+         </div>
+       </div>
+ 
+-      {/* Shared Formula Alert Banner */}
++      {/* Formula banner */}
+       <div
+         style={{
+           background: 'rgba(0, 214, 222, 0.08)',
+@@ -220,74 +325,75 @@ const MarketSensitivity = () => {
+       >
+         <span style={{ fontSize: '18px', color: '#00d6de' }}>ℹ️</span>
+         <div>
+-          This value is a shared formula used identically in live trading, simulation, and final settlement.{' '}
+-          <strong style={{ color: '#00d6de' }}>Changes take effect immediately on save.</strong>
++          Real-user trades move the price by exactly{' '}
++          <code style={{ color: '#00d6de' }}>curve(amount) × (sensitivity ÷ {defaultSensitivity}) × multiplier</code> pips, rounded to the
++          5-decimal quote (never less than one quote tick = 0.1 pip). No other term touches a real trade.{' '}
++          <strong style={{ color: '#00d6de' }}>Saving pushes the new values to the engine immediately.</strong> NPC trades use the
++          separate market-pressure model and are shown separately in the Live Trade Log below.
+         </div>
+       </div>
+ 
+-      {/* Control Cards Layout (2 Top Cards in 6-col 1fr 1fr, Live Preview full width) */}
+       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+ 
+         {/* Card 1: GLOBAL SENSITIVITY */}
+         <PermissionGate permission="marketSensitivity.globalSensitivity">
+           <div className="section-card" style={{ marginBottom: 0, padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+             <div>
+-              <span style={{ fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: '14px' }}>
+-                GLOBAL SENSITIVITY
+-              </span>
+-
+-              {/* Stepper Control */}
+-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0a0a0a', border: '1px solid #282828', borderRadius: '8px', padding: '10px 16px', marginBottom: '14px' }}>
+-                <button
+-                  type="button"
+-                  onClick={() => handleSensitivityChange(-1)}
+-                  style={{ background: 'none', border: 'none', color: '#fff', fontSize: '20px', fontWeight: '700', cursor: 'pointer', padding: '0 8px' }}
+-                >
+-                  —
+-                </button>
+-                <span style={{ fontSize: '22px', fontWeight: '800', color: '#fff', fontFamily: 'monospace' }}>
+-                  {sensitivity}
+-                </span>
+-                <button
+-                  type="button"
+-                  onClick={() => handleSensitivityChange(1)}
+-                  style={{ background: 'none', border: 'none', color: '#fff', fontSize: '20px', fontWeight: '700', cursor: 'pointer', padding: '0 8px' }}
+-                >
+-                  +
+-                </button>
++              <span style={{ ...labelStyle, marginBottom: '14px' }}>GLOBAL SENSITIVITY</span>
++              <div style={stepperStyle}>
++                <button type="button" onClick={() => handleSensitivityChange(-1)} style={stepperBtn}>—</button>
++                <span style={{ fontSize: '22px', fontWeight: '800', color: '#fff', fontFamily: 'monospace' }}>{sensitivity}</span>
++                <button type="button" onClick={() => handleSensitivityChange(1)} style={stepperBtn}>+</button>
+               </div>
+               <div className="rotation-info-box">
+                 <span className="rotation-italic-text">
+-                  How reactive prices are to trading. Higher means the price moves more from the same trade size; lower keeps prices steadier. <strong>Doesn't take effect until you click Save Configuration below.</strong>
++                  Whole number 1–10. The formula multiplies by sensitivity ÷ {defaultSensitivity}, so {defaultSensitivity} = neutral, 10 = double, 1 = one fifth.{' '}
++                  <strong>Applies after Save Configuration.</strong>
+                 </span>
+               </div>
+ 
+-              {/* Multiplier Stepper */}
+-              <span style={{ fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: '10px' }}>
+-                MULTIPLIER
+-              </span>
+-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0a0a0a', border: '1px solid #282828', borderRadius: '8px', padding: '10px 16px', marginBottom: '14px' }}>
+-                <button
+-                  type="button"
+-                  onClick={() => handleMultiplierChange(-0.1)}
+-                  style={{ background: 'none', border: 'none', color: '#fff', fontSize: '20px', fontWeight: '700', cursor: 'pointer', padding: '0 8px' }}
+-                >
+-                  —
+-                </button>
+-                <span style={{ fontSize: '22px', fontWeight: '800', color: '#fff', fontFamily: 'monospace' }}>
+-                  {multiplier.toFixed(1)}
++              <span style={labelStyle}>MULTIPLIER</span>
++              <div style={stepperStyle}>
++                <button type="button" onClick={() => handleMultiplierChange(-0.1)} style={stepperBtn}>—</button>
++                <span style={{ fontSize: '22px', fontWeight: '800', color: '#fff', fontFamily: 'monospace' }}>{multiplier.toFixed(1)}</span>
++                <button type="button" onClick={() => handleMultiplierChange(0.1)} style={stepperBtn}>+</button>
++              </div>
++              <div className="rotation-info-box">
++                <span className="rotation-italic-text">
++                  Flat scale on the final pip count (0.1–10). <strong>Applies after Save Configuration.</strong>
+                 </span>
+-                <button
+-                  type="button"
+-                  onClick={() => handleMultiplierChange(0.1)}
+-                  style={{ background: 'none', border: 'none', color: '#fff', fontSize: '20px', fontWeight: '700', cursor: 'pointer', padding: '0 8px' }}
+-                >
+-                  +
+-                </button>
++              </div>
++
++              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
++                <div>
++                  <span style={labelStyle}>REFERENCE AMOUNT (USD)</span>
++                  <input
++                    type="number"
++                    min="1"
++                    step="1000"
++                    className="form-input"
++                    value={referenceAmount}
++                    onChange={(e) => setReferenceAmount(e.target.value)}
++                    style={inputStyle}
++                  />
++                </div>
++                <div>
++                  <span style={labelStyle}>REFERENCE PIPS</span>
++                  <input
++                    type="number"
++                    min="0"
++                    step="0.1"
++                    className="form-input"
++                    value={referencePips}
++                    onChange={(e) => setReferencePips(e.target.value)}
++                    style={inputStyle}
++                  />
++                </div>
+               </div>
+               <div className="rotation-info-box">
+                 <span className="rotation-italic-text">
+-                  A flat scaling factor applied on top of Sensitivity above — think of it as a second, simpler "how much" dial. <strong>Also doesn't take effect until you click Save Configuration below.</strong>
++                  The anchor of the curve: a trade of exactly the reference amount moves the reference pips (before sensitivity and
++                  multiplier). With Linear, half the amount moves half the pips. <strong>Applies after Save Configuration.</strong>
+                 </span>
+               </div>
+ 
+@@ -298,10 +404,9 @@ const MarketSensitivity = () => {
+                 disabled={updateMarketSensitivityLoading}
+                 style={{ width: '100%' }}
+               >
+-                {updateMarketSensitivityLoading ? 'Saving...' : 'Save Configuration'}
++                {updateMarketSensitivityLoading ? 'Saving...' : unsaved ? 'Save Configuration (unsaved changes)' : 'Save Configuration'}
+               </button>
+             </div>
+-
+             <p style={{ fontSize: '12px', color: '#777', margin: 0, marginTop: '14px', lineHeight: '1.5' }}>
+               Higher = more volatile (fewer orders move price).<br />
+               Lower = more stable (more volume needed to move price).
+@@ -309,16 +414,12 @@ const MarketSensitivity = () => {
+           </div>
+         </PermissionGate>
+ 
+-        {/* Card 2: PER-ROUND OVERRIDE */}
++        {/* Card 2: PER-ROUND OVERRIDE + CURVE */}
+         <PermissionGate permission="marketSensitivity.perRoundOverride">
+           <div className="section-card" style={{ marginBottom: 0, padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+             <div>
+               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+-                <span style={{ fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+-                  PER-ROUND OVERRIDE
+-                </span>
+-
+-                {/* Toggle Switch */}
++                <span style={{ ...labelStyle, marginBottom: 0 }}>PER-ROUND OVERRIDE</span>
+                 <label style={{ position: 'relative', display: 'inline-block', width: '38px', height: '20px', cursor: setMarketSensitivityRoundOverrideLoading ? 'wait' : 'pointer' }}>
+                   <input
+                     type="checkbox"
+@@ -327,16 +428,8 @@ const MarketSensitivity = () => {
+                     onChange={(e) => handleOverrideToggle(e.target.checked)}
+                     style={{ opacity: 0, width: 0, height: 0 }}
+                   />
+-                  <span style={{
+-                    position: 'absolute', inset: 0,
+-                    backgroundColor: overrideEnabled ? '#00e676' : '#333',
+-                    borderRadius: '20px', transition: '0.3s'
+-                  }}>
+-                    <span style={{
+-                      position: 'absolute', height: '14px', width: '14px',
+-                      left: overrideEnabled ? '21px' : '3px', bottom: '3px',
+-                      backgroundColor: '#fff', borderRadius: '50%', transition: '0.3s'
+-                    }} />
++                  <span style={{ position: 'absolute', inset: 0, backgroundColor: overrideEnabled ? '#00e676' : '#333', borderRadius: '20px', transition: '0.3s' }}>
++                    <span style={{ position: 'absolute', height: '14px', width: '14px', left: overrideEnabled ? '21px' : '3px', bottom: '3px', backgroundColor: '#fff', borderRadius: '50%', transition: '0.3s' }} />
+                   </span>
+                 </label>
+               </div>
+@@ -346,7 +439,8 @@ const MarketSensitivity = () => {
+               </label>
+               <div className="rotation-info-box" style={{ marginBottom: '14px' }}>
+                 <span className="rotation-italic-text">
+-                  <strong>Saves immediately when flipped — no Save button needed.</strong> Temporarily replaces the Global Sensitivity value (left) with a different one, but only for the round that's happening right now. Turning this off returns to the global value automatically.
++                  <strong>Saves immediately when flipped — no Save button needed.</strong> Replaces the Global Sensitivity for the round
++                  that is running now, and clears itself automatically when that round ends (this toggle follows it).
+                 </span>
+               </div>
+ 
+@@ -359,30 +453,23 @@ const MarketSensitivity = () => {
+                   disabled={!overrideEnabled}
+                   className="form-input"
+                   value={overrideValue}
+-                  onChange={(e) => setOverrideValue(parseInt(e.target.value, 10) || 0)}
++                  onChange={(e) => setOverrideValue(Math.min(10, Math.max(1, parseInt(e.target.value, 10) || 1)))}
+                   onBlur={handleOverrideValueCommit}
+-                  style={{ background: '#0a0a0a', border: '1px solid #282828', textAlign: 'center', fontSize: '18px', fontWeight: '700', color: overrideEnabled ? '#fff' : '#555', opacity: overrideEnabled ? 1 : 0.5 }}
++                  style={{ ...inputStyle, textAlign: 'center', fontSize: '18px', color: overrideEnabled ? '#fff' : '#555', opacity: overrideEnabled ? 1 : 0.5 }}
+                 />
+                 <span style={{ fontSize: '10px', color: '#666', letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', textAlign: 'center', marginTop: '6px' }}>
+-                  SPECIFIC ROUND VALUE
++                  SPECIFIC ROUND VALUE (1–10)
+                 </span>
+               </div>
+               <div className="rotation-info-box">
+                 <span className="rotation-italic-text">
+-                  <strong>Saves as soon as you click away from this field — no Save button needed.</strong> Only used while the toggle above is on. Grayed out and ignored while the toggle is off.
++                  <strong>Saves as soon as you click away from this field.</strong> Only used while the toggle above is on.
+                 </span>
+               </div>
+ 
+               <div style={{ marginTop: '18px' }}>
+-                <label className="form-label" htmlFor="sens-curve" style={{ fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: '8px' }}>
+-                  Curve
+-                </label>
+-                <select
+-                  id="sens-curve"
+-                  className="form-select"
+-                  value={curve}
+-                  onChange={(e) => setCurve(e.target.value)}
+-                >
++                <label className="form-label" htmlFor="sens-curve" style={{ ...labelStyle, marginBottom: '8px' }}>Curve</label>
++                <select id="sens-curve" className="form-select" value={curve} onChange={(e) => setCurve(e.target.value)}>
+                   <option value="log">Log</option>
+                   <option value="linear">Linear</option>
+                   <option value="sqrt">Sqrt</option>
+@@ -390,14 +477,15 @@ const MarketSensitivity = () => {
+               </div>
+               <div className="rotation-info-box">
+                 <span className="rotation-italic-text">
+-                  Shapes how price impact grows as trade size grows. Log = impact grows slowly for bigger trades (most forgiving of whales). Linear = impact grows proportionally. Sqrt = a middle ground between the two. <strong>Despite living in this card, this is saved by the "Save Configuration" button in the Global Sensitivity card on the left, not automatically.</strong>
++                  Shapes how impact grows with trade size. Log = grows slowly for bigger trades. Linear = proportional. Sqrt = in between.{' '}
++                  <strong>Saved by "Save Configuration" in the left card.</strong>
+                 </span>
+               </div>
+             </div>
+           </div>
+         </PermissionGate>
+ 
+-        {/* Card 3: Live Preview Card (Full Width) */}
++        {/* Card 3: Live Preview (full width) */}
+         <div className="section-card" style={{ gridColumn: '1 / -1', marginBottom: 0, padding: '20px', border: '1px solid rgba(0, 214, 222, 0.3)', background: 'linear-gradient(135deg, rgba(0, 214, 222, 0.04) 0%, rgba(20, 20, 20, 0.9) 100%)' }}>
+           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+             <span style={{ fontSize: '14px', fontWeight: '700', color: '#00d6de' }}>Live Preview</span>
+@@ -406,86 +494,117 @@ const MarketSensitivity = () => {
+             </span>
+           </div>
+           <p style={{ fontSize: '12px', color: '#777', marginTop: 0, marginBottom: '16px' }}>
+-            Recalculates instantly using current settings
++            Left: the settings shown on this page (including unsaved edits). Right: what the engine executes right now with the saved
++            settings and the live price — the same function the engine runs.
+           </p>
+ 
+-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', alignItems: 'center' }}>
++          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', alignItems: 'stretch' }}>
+             <div>
+-              <label style={{ fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: '6px' }}>
+-                TEST BUY VOLUME
+-              </label>
++              <label style={labelStyle}>TEST TRADE</label>
++              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
++                {['BUY', 'SELL'].map((s) => (
++                  <button
++                    key={s}
++                    type="button"
++                    onClick={() => setPreviewSide(s)}
++                    style={{ flex: 1, padding: '8px', borderRadius: 6, border: '1px solid #282828', cursor: 'pointer', fontWeight: 700, background: previewSide === s ? (s === 'BUY' ? 'rgba(0,214,222,0.2)' : 'rgba(255,45,134,0.2)') : '#0a0a0a', color: previewSide === s ? (s === 'BUY' ? '#00d6de' : '#ff2d86') : '#888' }}
++                  >
++                    {s}
++                  </button>
++                ))}
++              </div>
+               <div style={{ position: 'relative' }}>
+                 <input
+                   type="number"
+                   className="form-input"
+                   value={testVolume}
+                   onChange={(e) => setTestVolume(e.target.value)}
+-                  onBlur={() => {
+-                    if (testVolume === '' || Number.isNaN(Number(testVolume))) setTestVolume('0');
+-                  }}
+-                  style={{ background: '#0a0a0a', border: '1px solid #282828', fontSize: '14px', fontWeight: '700', color: '#fff', paddingRight: '40px' }}
++                  onBlur={() => { if (testVolume === '' || Number.isNaN(Number(testVolume))) setTestVolume('0'); }}
++                  style={{ ...inputStyle, paddingRight: '40px' }}
+                 />
+-                <span style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: '#666', fontWeight: '700' }}>
+-                  USD
+-                </span>
++                <span style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: '#666', fontWeight: '700' }}>USD</span>
+               </div>
+               <div className="rotation-info-box">
+-                <span className="rotation-italic-text">
+-                  <strong>This is a "what if" calculator only — nothing here is saved.</strong> Type an amount to see roughly how much the price would move with the settings currently shown on this page, before you commit to them.
+-                </span>
++                <span className="rotation-italic-text"><strong>"What if" only — nothing here is saved.</strong></span>
+               </div>
+             </div>
+ 
+-            {/* Projected Impact Box */}
+             <div style={{ background: '#0a0a0a', border: '1px solid rgba(0, 214, 222, 0.3)', borderRadius: '8px', padding: '14px 18px' }}>
+-              <span style={{ fontSize: '10px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block' }}>
+-                PROJECTED IMPACT
+-              </span>
++              <span style={{ ...labelStyle, marginBottom: 4 }}>WITH THE SETTINGS ON THIS PAGE{unsaved ? ' (UNSAVED)' : ''}</span>
+               <div style={{ fontSize: '20px', fontWeight: '800', color: '#00d6de', marginTop: '4px' }}>
+-                Price moves +{projectedPips} pips
++                {fmtPips(localPreview.pips, 4)} pips formula
++              </div>
++              <div style={{ fontSize: 13, color: '#e5e7eb', marginTop: 6 }}>
++                Executes as <strong>{fmtPips(localPreview.executedPips, 1)} pips</strong>: {fmtPrice(localPreview.before)} → {fmtPrice(localPreview.after)}
++                {localPreview.floored && <span style={{ color: '#f59e0b' }}> (below one quote tick — floored to 0.1 pip)</span>}
+               </div>
+-              <span style={{ fontSize: '9px', color: '#666', letterSpacing: '0.04em', marginTop: '4px', display: 'block', lineHeight: '1.4', textTransform: 'none' }}>
+-                Exact move a real-user trade of this size will execute, at any round price —
+-                deterministic formula only (Reference Amount / Pips / Curve / Sensitivity / Multiplier),
+-                no market-pressure model. NPC/bot trades are not covered by this preview.
++              <span style={{ fontSize: '9px', color: '#666', marginTop: '6px', display: 'block', lineHeight: '1.4' }}>
++                Sensitivity {overrideEnabled ? `${overrideValue} (round override)` : sensitivity} ÷ {defaultSensitivity} · multiplier {Number(multiplier).toFixed(1)} · {curve} curve · {Number(referencePips)} pips per ${Number(referenceAmount).toLocaleString()}
+               </span>
+             </div>
++
++            <div style={{ background: '#0a0a0a', border: '1px solid rgba(0, 230, 118, 0.3)', borderRadius: '8px', padding: '14px 18px' }}>
++              <span style={{ ...labelStyle, marginBottom: 4 }}>ENGINE NOW (SAVED SETTINGS, LIVE PRICE)</span>
++              {serverPreview ? (
++                <>
++                  <div style={{ fontSize: '20px', fontWeight: '800', color: '#00e676', marginTop: '4px' }}>
++                    {fmtPips(serverPreview.side === 'SELL' ? -serverPreview.formula_pips : serverPreview.formula_pips, 4)} pips formula
++                  </div>
++                  <div style={{ fontSize: 13, color: '#e5e7eb', marginTop: 6 }}>
++                    Executes as <strong>{fmtPips(serverPreview.executed_pips, 1)} pips</strong>: {fmtPrice(serverPreview.price_before)} → {fmtPrice(serverPreview.price_after)}
++                    {serverPreview.floored_to_quote_tick && <span style={{ color: '#f59e0b' }}> (floored to 0.1 pip)</span>}
++                  </div>
++                  <span style={{ fontSize: '9px', color: '#666', marginTop: '6px', display: 'block', lineHeight: '1.4' }}>
++                    Sensitivity {serverPreview.sensitivity_used}{serverPreview.override_active ? ' (round override)' : ''} · multiplier {Number(serverPreview.config?.multiplier ?? 1).toFixed(1)} · {serverPreview.config?.curve} curve · price from {serverPreview.price_source === 'live' ? 'the live round' : serverPreview.price_source === 'round_start' ? 'the round start' : 'a default'}
++                  </span>
++                </>
++              ) : (
++                <div style={{ fontSize: 13, color: '#888', marginTop: 8 }}>{serverPreviewError || 'Loading…'}</div>
++              )}
++            </div>
+           </div>
+         </div>
+ 
+-        {/* Card 4: Live Trade Log (Full Width) */}
++        {/* Card 4: Live Trade Log (full width) */}
+         <div className="section-card" style={{ gridColumn: '1 / -1', marginBottom: 0, padding: '20px', border: '1px solid rgba(0, 214, 222, 0.3)' }}>
+           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+             <span style={{ fontSize: '14px', fontWeight: '700', color: '#00d6de' }}>Live Trade Log</span>
+-            {liveTradeLogLoading && (
+-              <span style={{ fontSize: '10px', color: '#888' }}>Refreshing…</span>
+-            )}
++            {liveTradeLogLoading && <span style={{ fontSize: '10px', color: '#888' }}>Refreshing…</span>}
+           </div>
+           <p style={{ fontSize: '12px', color: '#777', marginTop: 0, marginBottom: '12px' }}>
+-            Every trade in the active round, and how many pips it actually moved the price — split by
+-            source, so you can see why the round's total movement can differ from a single trade's
+-            own formula prediction (NPC trades use a separate market-pressure model, not this
+-            deterministic formula).
++            Every priced trade of the active round with the pips it actually moved the quote. For real trades the formula value is shown
++            next to the actual move so any difference is visible at once. The round total is measured on the price itself (start → now);
++            "other" is quote rounding on individual ticks.
+           </p>
+ 
+           {!liveTradeLog || liveTradeLog.battle_id == null ? (
+-            <p style={{ textAlign: 'center', padding: 16, color: '#888', fontSize: 13 }}>
+-              No active battle right now.
+-            </p>
++            <p style={{ textAlign: 'center', padding: 16, color: '#888', fontSize: 13 }}>No active battle right now.</p>
+           ) : (
+             <>
+               <div style={{ display: 'flex', gap: 16, marginBottom: 14, flexWrap: 'wrap' }}>
+-                <div style={{ background: '#0a0a0a', border: '1px solid #282828', borderRadius: 8, padding: '10px 16px' }}>
+-                  <span style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block' }}>Total This Round</span>
+-                  <span style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>{liveTradeLog.total_delta_pips >= 0 ? '+' : ''}{liveTradeLog.total_delta_pips} pips</span>
++                <div style={statBox}>
++                  <span style={statLabel}>Round #{liveTradeLog.battle_id} · price</span>
++                  <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{fmtPrice(liveTradeLog.start_price)} → {fmtPrice(liveTradeLog.current_price)}</span>
+                 </div>
+-                <div style={{ background: '#0a0a0a', border: '1px solid #282828', borderRadius: 8, padding: '10px 16px' }}>
+-                  <span style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block' }}>From Real Trades</span>
+-                  <span style={{ fontSize: 16, fontWeight: 800, color: '#00d6de' }}>{liveTradeLog.real_delta_pips_sum >= 0 ? '+' : ''}{liveTradeLog.real_delta_pips_sum} pips</span>
++                <div style={statBox}>
++                  <span style={statLabel}>Total this round</span>
++                  <span style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>{fmtPips(liveTradeLog.total_delta_pips)} pips</span>
+                 </div>
+-                <div style={{ background: '#0a0a0a', border: '1px solid #282828', borderRadius: 8, padding: '10px 16px' }}>
+-                  <span style={{ fontSize: 10, color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block' }}>From NPC Trades</span>
+-                  <span style={{ fontSize: 16, fontWeight: 800, color: '#f59e0b' }}>{liveTradeLog.npc_delta_pips_sum >= 0 ? '+' : ''}{liveTradeLog.npc_delta_pips_sum} pips</span>
++                <div style={statBox}>
++                  <span style={statLabel}>From real trades ({liveTradeLog.real_trade_count ?? 0})</span>
++                  <span style={{ fontSize: 16, fontWeight: 800, color: '#00d6de' }}>{fmtPips(liveTradeLog.real_delta_pips_sum)} pips</span>
++                </div>
++                <div style={statBox}>
++                  <span style={statLabel}>From NPC trades ({liveTradeLog.npc_trade_count ?? 0})</span>
++                  <span style={{ fontSize: 16, fontWeight: 800, color: '#f59e0b' }}>{fmtPips(liveTradeLog.npc_delta_pips_sum)} pips</span>
++                </div>
++                <div style={statBox}>
++                  <span style={statLabel}>Other (rounding)</span>
++                  <span style={{ fontSize: 16, fontWeight: 800, color: '#888' }}>{fmtPips(liveTradeLog.other_delta_pips ?? 0)} pips</span>
++                </div>
++                <div style={statBox}>
++                  <span style={statLabel}>Sensitivity in force</span>
++                  <span style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>{liveTradeLog.sensitivity_used ?? '—'}{liveTradeLog.override_active ? ' (override)' : ''}</span>
+                 </div>
+               </div>
+ 
+@@ -497,37 +616,39 @@ const MarketSensitivity = () => {
+                       <th>SIDE</th>
+                       <th>AMOUNT</th>
+                       <th>SOURCE</th>
+-                      <th>Δ PIPS</th>
++                      <th>FORMULA</th>
++                      <th>ACTUAL Δ PIPS</th>
+                       <th>PRICE AFTER</th>
+                     </tr>
+                   </thead>
+                   <tbody>
+                     {!liveTradeLog.rows?.length ? (
+-                      <tr><td colSpan={6} style={{ textAlign: 'center', padding: 20 }}>No trades in this round yet.</td></tr>
++                      <tr><td colSpan={7} style={{ textAlign: 'center', padding: 20 }}>No trades in this round yet.</td></tr>
+                     ) : (
+-                      liveTradeLog.rows.map((row, idx) => (
+-                        <tr key={idx}>
+-                          <td>{new Date(row.time).toLocaleTimeString()}</td>
+-                          <td style={{ color: row.side === 'BUY' ? '#00d6de' : '#ff2d86' }}>{row.side || '—'}</td>
+-                          <td>{row.amount != null ? `$${row.amount.toLocaleString()}` : '—'}</td>
+-                          <td>
+-                            <span style={{
+-                              fontSize: 10,
+-                              fontWeight: 700,
+-                              padding: '2px 8px',
+-                              borderRadius: 10,
+-                              color: row.source === 'npc' ? '#f59e0b' : '#00d6de',
+-                              background: row.source === 'npc' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(0, 214, 222, 0.12)',
+-                            }}>
+-                              {row.source === 'npc' ? 'NPC' : 'REAL'}
+-                            </span>
+-                          </td>
+-                          <td style={{ color: (row.delta_pips ?? 0) >= 0 ? '#00d6de' : '#ff2d86' }}>
+-                            {row.delta_pips != null ? `${row.delta_pips >= 0 ? '+' : ''}${row.delta_pips.toFixed(2)}` : '—'}
+-                          </td>
+-                          <td>{row.price_after}</td>
+-                        </tr>
+-                      ))
++                      liveTradeLog.rows.map((row, idx) => {
++                        const mismatch =
++                          row.source !== 'npc' && row.formula_pips != null && row.delta_pips != null &&
++                          Math.abs(Math.abs(row.formula_pips) - Math.abs(row.delta_pips)) > 0.11;
++                        return (
++                          <tr key={idx}>
++                            <td>{new Date(row.time).toLocaleTimeString()}</td>
++                            <td style={{ color: row.side === 'BUY' ? '#00d6de' : '#ff2d86' }}>{row.side || '—'}</td>
++                            <td>{row.amount != null ? `$${row.amount.toLocaleString()}` : '—'}</td>
++                            <td>
++                              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, color: row.source === 'npc' ? '#f59e0b' : '#00d6de', background: row.source === 'npc' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(0, 214, 222, 0.12)' }}>
++                                {row.source === 'npc' ? 'NPC' : 'REAL'}
++                              </span>
++                            </td>
++                            <td style={{ color: '#aaa' }} title="Admin formula with the settings in force now">
++                              {row.formula_pips != null ? fmtPips(row.formula_pips, 4) : '—'}
++                            </td>
++                            <td style={{ color: (row.delta_pips ?? 0) >= 0 ? '#00d6de' : '#ff2d86' }} title={mismatch ? 'Differs from the formula by more than one quote tick — settings changed mid-round or a clamp applied' : ''}>
++                              {row.delta_pips != null ? fmtPips(row.delta_pips, 2) : '—'}{mismatch ? ' ⚠️' : ''}
++                            </td>
++                            <td>{fmtPrice(row.price_after)}</td>
++                          </tr>
++                        );
++                      })
+                     )}
+                   </tbody>
+                 </table>
+@@ -538,41 +659,31 @@ const MarketSensitivity = () => {
+ 
+       </div>
+ 
+-      {/* Standard Project Filter Bar Card */}
++      {/* Change-log filters */}
+       <div className="section-card">
+         <div className="battle-inspector-filters">
+-
+-          {/* Search Input */}
+           <div className="form-group battle-inspector-field battle-inspector-field--grow">
+-            <label className="form-label" htmlFor="sens-search">
+-              Search
+-            </label>
++            <label className="form-label" htmlFor="sens-search">Search</label>
+             <input
+               id="sens-search"
+               type="text"
+               className="form-input"
+-              placeholder="Search by log ID, admin, or field..."
++              placeholder="Search by log ID, admin, field or value..."
+               value={searchQuery}
+               onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
+             />
+           </div>
+-
+-          {/* Date Range Dropdown */}
+           <div className="form-group battle-inspector-field" style={{ minWidth: 260 }}>
+             <label className="form-label">Date Range</label>
+             <DateRangeDropdown
+               onChange={(range) => {
+-                setDateRange(range);
++                setDateRange(range && (range.startDate || range.endDate) ? range : null);
+                 setPage(1);
+               }}
+             />
+           </div>
+-
+-          {/* Field Select Dropdown */}
+           <div className="form-group battle-inspector-field">
+-            <label className="form-label" htmlFor="sens-field">
+-              Field Filter
+-            </label>
++            <label className="form-label" htmlFor="sens-field">Field Filter</label>
+             <select
+               id="sens-field"
+               className="form-select"
+@@ -583,23 +694,21 @@ const MarketSensitivity = () => {
+               <option value="SENSITIVITY">SENSITIVITY</option>
+               <option value="MULTIPLIER">MULTIPLIER</option>
+               <option value="OVERRIDE">PER-ROUND OVERRIDE</option>
++              <option value="CURVE">CURVE</option>
++              <option value="REFERENCE">REFERENCE AMOUNT / PIPS</option>
+             </select>
+           </div>
+-
+         </div>
+         <div className="rotation-info-box">
+           <span className="rotation-italic-text">
+-            <strong>Search:</strong> find a change by log ID, admin name, or field. <strong>Field Filter:</strong> only show history for one setting (Sensitivity, Multiplier, or Per-Round Override) instead of all of them.
++            <strong>Search:</strong> find a change by log ID, admin name / e-mail, field or value. <strong>Date Range:</strong> only changes made in that period.{' '}
++            <strong>Field Filter:</strong> only one setting's history. All three filter the full history, not just the current page.
+           </span>
+         </div>
+       </div>
+ 
+-      {/* Change History Audit Log Table Section */}
++      {/* Change History */}
+       <div className="section-card">
+-
+-
+-
+-        {/* Table */}
+         <div className="admin-table-wrapper">
+           <table className="admin-table">
+             <thead>
+@@ -616,18 +725,14 @@ const MarketSensitivity = () => {
+             <tbody>
+               {marketSensitivityChangeLogLoading ? (
+                 <tr>
+-                  <td colSpan="7" style={{ textAlign: 'center', color: '#888', padding: '30px' }}>
+-                    Loading change history...
+-                  </td>
++                  <td colSpan="7" style={{ textAlign: 'center', color: '#888', padding: '30px' }}>Loading change history...</td>
+                 </tr>
+-              ) : filteredLogs.length === 0 ? (
++              ) : logs.length === 0 ? (
+                 <tr>
+-                  <td colSpan="7" style={{ textAlign: 'center', color: '#888', padding: '30px' }}>
+-                    No change history logs match your filter.
+-                  </td>
++                  <td colSpan="7" style={{ textAlign: 'center', color: '#888', padding: '30px' }}>No change history logs match your filter.</td>
+                 </tr>
+               ) : (
+-                filteredLogs.map((log) => (
++                logs.map((log) => (
+                   <tr key={log.id}>
+                     <td className="table-id">#LOG-{log.id}</td>
+                     <td>
+@@ -644,11 +749,7 @@ const MarketSensitivity = () => {
+                         {log.field}
+                       </span>
+                     </td>
+-                    <td>
+-                      <span className="um-status-badge active" style={{ fontSize: '11px' }}>
+-                        {log.status}
+-                      </span>
+-                    </td>
++                    <td><span className="um-status-badge active" style={{ fontSize: '11px' }}>{log.status}</span></td>
+                   </tr>
+                 ))
+               )}
+@@ -656,21 +757,10 @@ const MarketSensitivity = () => {
+           </table>
+         </div>
+ 
+-        {/* Footer Pagination */}
+         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginTop: '20px', paddingTop: '15px', borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}>
+-          <Pagination
+-            currentPage={page}
+-            totalPages={totalPages}
+-            totalItems={totalItems}
+-            perPage={limit}
+-            onPageChange={setPage}
+-          />
++          <Pagination currentPage={page} totalPages={totalPages} totalItems={totalItems} perPage={limit} onPageChange={setPage} />
+         </div>
+-
+       </div>
+-
+-
+-
+     </div>
+   );
+ };
+diff --git a/src/Pages/PriceMovementAudit/index.jsx b/src/Pages/PriceMovementAudit/index.jsx
+index ce9f0c9..07fa693 100644
+--- a/src/Pages/PriceMovementAudit/index.jsx
++++ b/src/Pages/PriceMovementAudit/index.jsx
+@@ -50,7 +50,7 @@ const PriceMovementAudit = () => {
+ 
+   // Filters
+   const [searchId, setSearchId] = useState('');
+-  const [dateRangeFilter, setDateRangeFilter] = useState('Select Range');
++  const [dateRangeFilter, setDateRangeFilter] = useState('This Month');
+   const [statusFilter, setStatusFilter] = useState('All Statuses');
+ 
+   const data = priceMovementAudit?.data;
+@@ -61,6 +61,8 @@ const PriceMovementAudit = () => {
+   const period =
+     dateRangeFilter === 'Today' ? 'today' : dateRangeFilter === 'This Week' ? 'week' : 'month';
+   const debouncedBattleId = searchId.trim();
++  // Pass / Fail is a server-side filter now, so the counts and the pages stay consistent.
++  const statusParam = statusFilter === 'Pass' ? 'pass' : statusFilter === 'Fail' ? 'fail' : 'all';
+ 
+   useEffect(() => {
+     setPage(1);
+@@ -68,12 +70,13 @@ const PriceMovementAudit = () => {
+       fetchPriceMovementAudit({
+         period,
+         battle_id: debouncedBattleId,
++        status: statusParam,
+         page: 1,
+         limit: LIMIT,
+       }),
+     );
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [dispatch, period, debouncedBattleId]);
++  }, [dispatch, period, debouncedBattleId, statusParam]);
+ 
+   useEffect(() => {
+     if (page === 1) return;
+@@ -81,6 +84,7 @@ const PriceMovementAudit = () => {
+       fetchPriceMovementAudit({
+         period,
+         battle_id: debouncedBattleId,
++        status: statusParam,
+         page,
+         limit: LIMIT,
+       }),
+@@ -139,18 +143,14 @@ const PriceMovementAudit = () => {
+     }
+   };
+ 
+-  // Rows are already filtered to flagged battles by the backend; apply the
+-  // Pass/Fail status filter client-side same as the design's dummy-data filter did.
+-  const filteredRows = rows.filter((r) => {
+-    if (statusFilter === 'All Statuses') return true;
+-    const status = r.is_flagged ? 'Fail' : 'Pass';
+-    return status === statusFilter;
+-  });
+-
+-  const failedRounds = rows.filter((r) => r.is_flagged).length;
+-  const passRate = pagination.total > 0 ? ((pagination.total - failedRounds) / pagination.total) * 100 : null;
+-  const avgVariance =
+-    rows.length > 0 ? rows.reduce((sum, r) => sum + Math.abs(r.swing_pct ?? 0), 0) / rows.length : null;
++  // The server applies the Pass/Fail filter and returns window-wide figures in `summary`
++  // (computed over every settled round in the period, not just the current page).
++  const filteredRows = rows;
++  const summary = data?.summary || null;
++  const auditedTotal = summary?.total ?? pagination.total;
++  const failedRounds = summary?.flagged ?? rows.filter((r) => r.is_flagged).length;
++  const passRate = summary?.pass_rate_pct ?? null;
++  const avgVariance = summary?.avg_abs_variance_pct ?? summary?.avg_swing_pct ?? null;
+ 
+   if (viewState === 'settings') {
+     return (
+@@ -242,7 +242,7 @@ const PriceMovementAudit = () => {
+           <div className="form-group battle-inspector-field">
+             <label className="form-label">Date Range</label>
+             <select className="form-select" value={dateRangeFilter} onChange={(e) => setDateRangeFilter(e.target.value)}>
+-              <option>Select Range</option>
++              <option>This Month</option>
+               <option>Today</option>
+               <option>This Week</option>
+             </select>
+@@ -280,11 +280,11 @@ const PriceMovementAudit = () => {
+         <div className="pma-metric-card">
+           <div className="pma-metric-title">Total Rounds Audited</div>
+           <div className={`pma-metric-value ${hasData ? 'active' : ''}`}>
+-            {hasData ? pagination.total : '0'}
++            {hasData ? auditedTotal : '0'}
+           </div>
+           {hasData && (
+             <div className="pma-metric-sub">
+-              <span>Matching current filters</span>
++              <span>Settled rounds in this period</span>
+             </div>
+           )}
+           <div className="pma-metric-bg-icon">🗂️</div>
+@@ -318,11 +318,11 @@ const PriceMovementAudit = () => {
+         <div className="pma-metric-card">
+           <div className="pma-metric-title">Avg Variance</div>
+           <div className={`pma-metric-value ${hasData ? 'active' : ''}`}>
+-            {hasData && avgVariance != null ? `${avgVariance.toFixed(2)}%` : '—'}
++            {hasData && avgVariance != null ? `${Number(avgVariance).toFixed(2)}%` : '—'}
+           </div>
+           {hasData && (
+             <div className="pma-metric-sub">
+-              <span>Avg intra-round swing (this page)</span>
++              <span>{summary?.avg_abs_variance_pct != null ? 'Avg |expected − actual| (this period)' : 'Avg intra-round swing (this period)'}</span>
+             </div>
+           )}
+           <div className="pma-metric-bg-icon">📈</div>
+@@ -367,7 +367,9 @@ const PriceMovementAudit = () => {
+                 ) : filteredRows.length === 0 ? (
+                   <tr>
+                     <td colSpan={13} style={{ textAlign: 'center', padding: 24 }}>
+-                      No battles flagged at the current threshold for this period.
++                      {statusFilter === 'Fail'
++                        ? 'No battles flagged at the current threshold for this period.'
++                        : 'No settled battles match these filters.'}
+                     </td>
+                   </tr>
+                 ) : (
+@@ -389,7 +391,14 @@ const PriceMovementAudit = () => {
+                           </span>
+                         )}
+                       </td>
+-                      <td>{row.multiplier_used != null ? `${row.multiplier_used}x` : '—'}</td>
++                      <td>
++                        {row.multiplier_used != null ? `${row.multiplier_used}x` : '—'}
++                        {row.round_override_applied && (
++                          <span title="A per-round sensitivity override was active for this round." style={{ color: '#f59e0b', marginLeft: 4 }}>
++                            ⏱
++                          </span>
++                        )}
++                      </td>
+                       <td>{fmtPrice(row.expected_end_price)}</td>
+                       <td>{fmtPct(row.swing_pct)}</td>
+                       <td className={row.is_flagged ? 'pma-val-pink' : 'pma-val-cyan'}>{fmtPct(row.price_variance_pct)}</td>
+diff --git a/src/store/slices/adminSlice.js b/src/store/slices/adminSlice.js
+index c095710..588c105 100644
+--- a/src/store/slices/adminSlice.js
++++ b/src/store/slices/adminSlice.js
+@@ -3128,9 +3128,10 @@ export const fetchBattleInspectorDetail = createAsyncThunk(
+ 
+ export const fetchPriceMovementAudit = createAsyncThunk(
+   "admin/fetchPriceMovementAudit",
+-  async ({ period = "month", start_date, end_date, battle_id, page = 1, limit = 10 } = {}, { rejectWithValue }) => {
++  async ({ period = "month", start_date, end_date, battle_id, page = 1, limit = 10, status } = {}, { rejectWithValue }) => {
+     try {
+       const params = { page, limit };
++      if (status && status !== "all") params.status = status;
+       if (battle_id != null && battle_id !== "") {
+         params.battle_id = battle_id;
+       } else {
+@@ -3623,10 +3624,15 @@ export const setMarketSensitivityRoundOverride = createAsyncThunk(
+ /* GET MARKET SENSITIVITY CHANGE LOG */
+ export const fetchMarketSensitivityChangeLog = createAsyncThunk(
+   "admin/fetchMarketSensitivityChangeLog",
+-  async ({ page = 1, limit = 20 } = {}, { rejectWithValue }) => {
++  async ({ page = 1, limit = 20, search, field, from, to } = {}, { rejectWithValue }) => {
+     try {
++      const params = { page, limit };
++      if (search) params.search = search;
++      if (field && field !== "All") params.field = field;
++      if (from) params.from = from;
++      if (to) params.to = to;
+       const res = await axiosInstance.get("/admin/market-sensitivity/change-log", {
+-        params: { page, limit },
++        params,
+         headers: {
+           Authorization: gettoken(),
+           "Content-Type": "application/json",
+-- 
+2.43.0
+
