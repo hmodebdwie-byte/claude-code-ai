@@ -1,0 +1,878 @@
+From a7e8466fae9b21ccaa9eeb054937f58c76b4efc0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 13 Sep 2026 22:09:50 +0000
+Subject: [PATCH] =?UTF-8?q?feat(npc):=20Organic=20Engine=20tab=20=E2=80=94?=
+ =?UTF-8?q?=20schema-driven=20settings,=20live=20round=20and=20round=20aud?=
+ =?UTF-8?q?its?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+New "Organic Engine" tab on the NPC Simulator page, rendered from the API's field
+schema (GET /admin/npc/organic/schema) so every engine setting is editable with its
+label, help text, range, unit and "applies" tag (instantly / next round / settlement).
+Status bar shows the engine mode with a live organic ⇄ legacy switch, the engine
+heartbeat and "saved vN / engine applied vN". Unsaved fields are marked, per-field
+server validation errors are shown inline, defaults are one click away.
+"Live round" polls the engine telemetry every second (lead target, tiers, NPC/real
+trade counts, sim volume, pot bar, projection, final injection, recent NPC trades);
+"Round audits" lists settled rounds with the settlement invariants and the lock /
+injection record. Legacy-only tabs are labelled.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Dzk243ADEkJuWxdHGG3hNv
+---
+ src/Pages/AdminDashboard/NpcOrganicEngine.jsx | 619 ++++++++++++++++++
+ src/Pages/AdminDashboard/NpcSimulator.css     |  65 ++
+ src/Pages/AdminDashboard/npcOrganicApi.js     |  75 +++
+ src/Pages/AdminDashboard/npcSimulator.jsx     |  21 +-
+ 4 files changed, 777 insertions(+), 3 deletions(-)
+ create mode 100644 src/Pages/AdminDashboard/NpcOrganicEngine.jsx
+ create mode 100644 src/Pages/AdminDashboard/npcOrganicApi.js
+
+diff --git a/src/Pages/AdminDashboard/NpcOrganicEngine.jsx b/src/Pages/AdminDashboard/NpcOrganicEngine.jsx
+new file mode 100644
+index 0000000..7711ac2
+--- /dev/null
++++ b/src/Pages/AdminDashboard/NpcOrganicEngine.jsx
+@@ -0,0 +1,619 @@
++import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
++import { toast } from 'react-toastify';
++import { PermissionGate } from '../../hooks/usePermission';
++import { npcOrganicApi, getPath, withPath, describeApiError, fieldErrorsFrom } from './npcOrganicApi';
++
++const LIVE_POLL_MS = 1000;
++const STATUS_POLL_MS = 5000;
++const ROUNDS_POLL_MS = 10000;
++
++const APPLIES_LABEL = {
++  live: 'applies instantly',
++  next_round: 'from the next round',
++  settlement: 'at settlement',
++};
++
++const money = (v) => {
++  const n = Number(v);
++  if (!Number.isFinite(n)) return '—';
++  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
++};
++const num = (v, d = 0) => {
++  const n = Number(v);
++  return Number.isFinite(n) ? n.toFixed(d) : '—';
++};
++const when = (iso) => {
++  if (!iso) return '—';
++  const d = new Date(iso);
++  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
++};
++const sideClass = (side) => (side === 'BUY' ? 'organic-side-buy' : side === 'SELL' ? 'organic-side-sell' : '');
++const isSame = (a, b) => JSON.stringify(a) === JSON.stringify(b);
++
++function usePoll(enabled, intervalMs, fn) {
++  const fnRef = useRef(fn);
++  useEffect(() => {
++    fnRef.current = fn;
++  }, [fn]);
++  useEffect(() => {
++    if (!enabled) return undefined;
++    let alive = true;
++    const tick = async () => {
++      if (!alive) return;
++      try {
++        await fnRef.current();
++      } catch {
++        /* the caller renders its own error state */
++      }
++    };
++    tick();
++    const id = setInterval(tick, intervalMs);
++    return () => {
++      alive = false;
++      clearInterval(id);
++    };
++  }, [enabled, intervalMs]);
++}
++
++/* ------------------------------------------------------------------------------------------ */
++
++function EngineStatusBar({ mode, savedVersion, status, onSwitchMode, switching }) {
++  const engine = status?.engine ?? null;
++  const reporting = engine != null && (engine.heartbeatAgeMs == null || engine.heartbeatAgeMs < 20000);
++  const applied = engine?.settingsVersion ?? null;
++  const behind = reporting && applied != null && savedVersion != null && applied < savedVersion;
++  return (
++    <div className="organic-status-bar">
++      <div className="organic-status-cell">
++        <span className="organic-status-label">Engine mode</span>
++        <span className={`organic-pill ${mode === 'organic' ? 'organic-pill-on' : 'organic-pill-legacy'}`}>
++          {mode === 'organic' ? 'ORGANIC (directives)' : 'LEGACY simulator'}
++        </span>
++        <PermissionGate permission="npcSimulator.edit">
++          <button
++            type="button"
++            className="rotation-reset-link"
++            disabled={switching}
++            onClick={() => onSwitchMode(mode === 'organic' ? 'legacy' : 'organic')}
++          >
++            {switching ? 'Switching…' : mode === 'organic' ? 'Switch to legacy' : 'Switch to organic'}
++          </button>
++        </PermissionGate>
++      </div>
++      <div className="organic-status-cell">
++        <span className="organic-status-label">Engine</span>
++        {reporting ? (
++          <span className={`organic-pill ${engine.active ? 'organic-pill-on' : 'organic-pill-off'}`}>
++            {engine.active ? 'RUNNING' : 'STOPPED'}
++            {engine.battleId ? ` · round #${engine.battleId}` : ''}
++          </span>
++        ) : (
++          <span className="organic-pill organic-pill-off">NOT REPORTING</span>
++        )}
++        <span className="organic-status-hint">
++          {reporting
++            ? `heartbeat ${Math.round((engine.heartbeatAgeMs ?? 0) / 1000)} s ago`
++            : 'start the NPC simulator (worker) to see live status'}
++        </span>
++      </div>
++      <div className="organic-status-cell">
++        <span className="organic-status-label">Settings</span>
++        <span className="organic-pill organic-pill-neutral">saved v{savedVersion ?? 0}</span>
++        {reporting && (
++          <span className={`organic-pill ${behind ? 'organic-pill-warn' : 'organic-pill-on'}`}>
++            engine applied v{applied ?? 0}
++          </span>
++        )}
++      </div>
++    </div>
++  );
++}
++
++/* ------------------------------------------------------------------------------------------ */
++
++function FieldInput({ spec, value, disabled, onChange }) {
++  const id = `organic-${spec.path.replace(/\./g, '-')}`;
++  if (spec.type === 'boolean') {
++    return (
++      <label className="organic-toggle" htmlFor={id}>
++        <input id={id} type="checkbox" checked={Boolean(value)} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
++        <span className="organic-toggle-track">
++          <span className="organic-toggle-thumb" />
++        </span>
++        <span className="organic-toggle-text">{value ? 'ON' : 'OFF'}</span>
++      </label>
++    );
++  }
++  if (spec.type === 'select') {
++    return (
++      <select id={id} className="rotation-input organic-select" value={value ?? ''} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
++        {(spec.options ?? []).map((o) => (
++          <option key={o.value} value={o.value}>
++            {o.label}
++          </option>
++        ))}
++      </select>
++    );
++  }
++  if (spec.type === 'text') {
++    return (
++      <input id={id} type="text" className="rotation-input left-align" value={value ?? ''} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
++    );
++  }
++  const step = spec.step ?? (spec.type === 'integer' ? 1 : 'any');
++  return (
++    <div className="rotation-input-container">
++      <input
++        id={id}
++        type="number"
++        className="rotation-input left-align"
++        value={value ?? ''}
++        min={spec.min}
++        max={spec.max}
++        step={step}
++        disabled={disabled}
++        onWheel={(e) => e.target.blur()}
++        onChange={(e) => {
++          const raw = e.target.value;
++          if (raw === '') {
++            onChange('');
++            return;
++          }
++          const n = Number(raw);
++          onChange(Number.isFinite(n) ? n : raw);
++        }}
++      />
++      {spec.unit ? <span className="rotation-input-suffix">{spec.unit}</span> : null}
++    </div>
++  );
++}
++
++function FieldRow({ spec, value, savedValue, defaultValue, error, disabled, onChange }) {
++  const changed = !isSame(value, savedValue);
++  const isDefault = isSame(value, defaultValue);
++  const range =
++    spec.type === 'number' || spec.type === 'integer'
++      ? [spec.min != null ? `min ${spec.min}` : null, spec.max != null ? `max ${spec.max}` : null].filter(Boolean).join(' · ')
++      : '';
++  return (
++    <div className={`organic-field ${changed ? 'organic-field-changed' : ''} ${error ? 'organic-field-error' : ''}`}>
++      <div className="organic-field-head">
++        <label className="rotation-label" htmlFor={`organic-${spec.path.replace(/\./g, '-')}`}>
++          {spec.label}
++        </label>
++        <span className={`organic-applies organic-applies-${spec.applies}`}>{APPLIES_LABEL[spec.applies] ?? spec.applies}</span>
++        {changed && <span className="organic-badge organic-badge-changed">unsaved</span>}
++      </div>
++      <FieldInput spec={spec} value={value} disabled={disabled} onChange={onChange} />
++      <div className="rotation-italic-text organic-help">{spec.help}</div>
++      <div className="organic-field-foot">
++        {range && <span>{range}</span>}
++        {!isDefault && (
++          <button type="button" className="organic-link" disabled={disabled} onClick={() => onChange(defaultValue)}>
++            default: {String(defaultValue)}
++          </button>
++        )}
++        {error && <span className="organic-error">{error}</span>}
++      </div>
++    </div>
++  );
++}
++
++function SettingsView({ schema, doc, form, errors, saving, onChange, onSave, onDiscard, onReset }) {
++  const groups = useMemo(() => schema?.groups ?? [], [schema]);
++  const fields = useMemo(() => schema?.fields ?? [], [schema]);
++  const dirtyPaths = useMemo(
++    () => fields.filter((f) => !isSame(getPath(form, f.path), getPath(doc?.values, f.path))).map((f) => f.path),
++    [fields, form, doc],
++  );
++  const errorCount = Object.keys(errors ?? {}).length;
++  return (
++    <>
++      <div className="organic-intro rotation-italic-text">
++        Every value below is pushed to the engine the moment you save. “applies instantly” fields change the running round;
++        “from the next round” fields are read when a round opens; “at settlement” fields are read when the round is settled.
++        Rotation &amp; Limits still apply in organic mode. Volume Distribution, Pool Balance and NPC Behavior only affect the legacy engine.
++      </div>
++      {groups.map((g) => {
++        const groupFields = fields.filter((f) => f.group === g.key);
++        if (!groupFields.length) return null;
++        return (
++          <div className="rotation-card organic-group" key={g.key}>
++            <h3 className="rotation-card-title">{g.title}</h3>
++            <div className="rotation-italic-text organic-group-desc">{g.description}</div>
++            <div className="organic-grid">
++              {groupFields.map((spec) => (
++                <FieldRow
++                  key={spec.path}
++                  spec={spec}
++                  value={getPath(form, spec.path)}
++                  savedValue={getPath(doc?.values, spec.path)}
++                  defaultValue={getPath(schema?.defaults, spec.path)}
++                  error={errors?.[spec.path]}
++                  disabled={saving}
++                  onChange={(v) => onChange(spec.path, v)}
++                />
++              ))}
++            </div>
++          </div>
++        );
++      })}
++      <div className="rotation-footer organic-footer">
++        <span className="organic-footer-status">
++          {dirtyPaths.length ? `${dirtyPaths.length} unsaved change${dirtyPaths.length === 1 ? '' : 's'}` : 'All changes saved'}
++          {errorCount ? ` · ${errorCount} invalid` : ''}
++          {doc?.updatedAt ? ` · last saved ${when(doc.updatedAt)}` : ''}
++        </span>
++        <PermissionGate permission="npcSimulator.edit">
++          <button type="button" className="rotation-reset-link" onClick={onReset} disabled={saving}>
++            Reset to directive defaults
++          </button>
++          <button type="button" className="rotation-reset-link" onClick={onDiscard} disabled={saving || !dirtyPaths.length}>
++            Discard changes
++          </button>
++          <button type="button" className="rotation-save-btn" onClick={onSave} disabled={saving || !dirtyPaths.length}>
++            {saving ? 'Saving…' : 'Save & push to engine'}
++          </button>
++        </PermissionGate>
++      </div>
++    </>
++  );
++}
++
++/* ------------------------------------------------------------------------------------------ */
++
++function Stat({ label, value, className }) {
++  return (
++    <div className="organic-stat">
++      <div className="organic-stat-label">{label}</div>
++      <div className={`organic-stat-value ${className ?? ''}`}>{value}</div>
++    </div>
++  );
++}
++
++function LiveView({ live, engine, error }) {
++  if (error) return <div className="rotation-card organic-empty">{error}</div>;
++  if (!live) {
++    return (
++      <div className="rotation-card organic-empty">
++        No live round telemetry. The organic engine publishes this once per second while a round is open
++        {engine?.active === false ? ' — the NPC simulator is stopped.' : engine == null ? ' — the engine is not reporting.' : '.'}
++      </div>
++    );
++  }
++  const pots = live.pots ?? {};
++  const buyPot = Number(pots.buyPot ?? pots.buy_pot ?? NaN);
++  const sellPot = Number(pots.sellPot ?? pots.sell_pot ?? NaN);
++  const total = (Number.isFinite(buyPot) ? buyPot : 0) + (Number.isFinite(sellPot) ? sellPot : 0);
++  const buyShare = total > 0 ? buyPot / total : 0.5;
++  const phase = live.locked
++    ? 'LOCKED — final injection'
++    : live.steeringSide
++      ? `steering → ${live.steeringSide}`
++      : live.quietUntilMs
++        ? 'quiet period'
++        : live.boostActive
++          ? 'real-trade boost'
++          : 'organic flow';
++  const proj = live.projection;
++  const inj = live.injection;
++  const trades = Array.isArray(live.recentTrades) ? live.recentTrades.slice().reverse() : [];
++  const remainingSec = Math.max(0, Math.round(Number(live.remainingMs ?? 0) / 1000));
++  return (
++    <>
++      <div className="rotation-card organic-group">
++        <h3 className="rotation-card-title">
++          Round #{live.battleId} <span className="organic-phase">{phase}</span>
++        </h3>
++        <div className="organic-stats">
++          <Stat label="Elapsed / remaining" value={`${live.elapsedSec ?? 0} s / ${remainingSec} s`} />
++          <Stat label="Peak hours" value={live.peak ? 'yes' : 'no'} />
++          <Stat label="Settings applied" value={`v${live.settingsVersion ?? 0}`} />
++          <Stat label="Lead target" value={live.lead ? `${live.lead.side} ${num(live.lead.sharePct, 1)}% of NPC volume` : '—'} className={sideClass(live.lead?.side)} />
++          <Stat label="Initial wave" value={`${live.plan?.initialSpawns ?? 0} NPCs`} />
++          <Stat label="Tiers (whale/mid/retail)" value={`${live.tiers?.whale ?? 0} / ${live.tiers?.mid ?? 0} / ${live.tiers?.retail ?? 0}`} />
++          <Stat label="NPC trades" value={`${live.npcTradeCount ?? 0} by ${live.distinctNpcs ?? 0} NPCs`} />
++          <Stat label="Real trades" value={live.realTradeCount ?? 0} />
++          <Stat label="Sim volume BUY" value={money(live.simVolume?.BUY)} className="organic-side-buy" />
++          <Stat label="Sim volume SELL" value={money(live.simVolume?.SELL)} className="organic-side-sell" />
++          <Stat label="Last real trade" value={live.lastRealTrade ? `${live.lastRealTrade.side ?? ''} ${money(live.lastRealTrade.amount)}` : '—'} />
++          <Stat label="Steering (Defense A)" value={live.steeringSide ?? 'off'} className={sideClass(live.steeringSide)} />
++        </div>
++        <div className="organic-potbar">
++          <div className="organic-potbar-buy" style={{ width: `${Math.round(buyShare * 100)}%` }}>
++            BUY {money(buyPot)}
++          </div>
++          <div className="organic-potbar-sell" style={{ width: `${Math.round((1 - buyShare) * 100)}%` }}>
++            SELL {money(sellPot)}
++          </div>
++        </div>
++      </div>
++
++      <div className="rotation-card organic-group">
++        <h3 className="rotation-card-title">Projection (refreshed every 5 s) &amp; final injection</h3>
++        {proj ? (
++          <div className="organic-stats">
++            <Stat label="Planned defense" value={proj.kind === 'none' ? 'none needed' : `${proj.kind} → ${proj.side ?? ''} ${money(proj.amount)}`} className={sideClass(proj.side)} />
++            <Stat label="Projected winner" value={proj.winnerSide ?? '—'} className={sideClass(proj.winnerSide)} />
++            <Stat label="Real losing volume" value={money(proj.realLosingVolume)} />
++            <Stat label="Real winning volume" value={money(proj.realWinningVolume)} />
++            <Stat label="Sim profit (capped)" value={money(proj.simProfit)} />
++            <Stat label="Surplus to real winners" value={money(proj.surplusToReal)} />
++            <Stat label="Company net" value={money(proj.companyNet)} />
++            <Stat label="Simulator net" value={money(proj.simulatorNet)} />
++            <Stat label="Reason" value={proj.reason ?? '—'} />
++          </div>
++        ) : (
++          <div className="rotation-italic-text">
++            {Number(live.realTradeCount ?? 0) === 0
++              ? 'No real stakes in this round yet — there is nothing to defend. The projection starts with the first real trade.'
++              : 'Projection pending (refreshed every 5 s).'}
++          </div>
++        )}
++        {inj && (
++          <div className="organic-injection">
++            <strong>Executed:</strong> {inj.kind} on {inj.side} — planned {money(inj.planned)}, executed {money(inj.executed)} in{' '}
++            {Array.isArray(inj.slices) ? inj.slices.length : 0} slices; locked at {when(inj.lockedAt)}; took {inj.durationMs ?? 0} ms.
++          </div>
++        )}
++      </div>
++
++      <div className="rotation-card organic-group">
++        <h3 className="rotation-card-title">Recent NPC trades</h3>
++        {trades.length ? (
++          <div className="organic-table-wrap">
++            <table className="organic-table">
++              <thead>
++                <tr>
++                  <th>t+ (s)</th>
++                  <th>NPC</th>
++                  <th>Tier</th>
++                  <th>Side</th>
++                  <th>Amount</th>
++                  <th>Reason</th>
++                </tr>
++              </thead>
++              <tbody>
++                {trades.map((t, i) => (
++                  <tr key={`${t.npcId ?? i}-${t.atMs ?? i}`}>
++                    <td>{t.elapsedSec != null ? num(t.elapsedSec, 1) : '—'}</td>
++                    <td>#{t.npcId ?? '—'}</td>
++                    <td>{t.tier ?? '—'}</td>
++                    <td className={sideClass(t.side)}>{t.side ?? '—'}</td>
++                    <td>{money(t.amount)}</td>
++                    <td>{t.reason ?? '—'}</td>
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          </div>
++        ) : (
++          <div className="rotation-italic-text">No NPC trade yet in this round.</div>
++        )}
++      </div>
++    </>
++  );
++}
++
++/* ------------------------------------------------------------------------------------------ */
++
++function RoundsView({ rounds, error, expanded, onToggle }) {
++  if (error) return <div className="rotation-card organic-empty">{error}</div>;
++  if (!rounds?.length) {
++    return <div className="rotation-card organic-empty">No settled rounds recorded yet. Rows appear after the first organic round settles.</div>;
++  }
++  return (
++    <div className="rotation-card organic-group">
++      <h3 className="rotation-card-title">Recent rounds (audit)</h3>
++      <div className="organic-table-wrap">
++        <table className="organic-table">
++          <thead>
++            <tr>
++              <th>Round</th>
++              <th>Winner</th>
++              <th>Real loser pool</th>
++              <th>Commission</th>
++              <th>Sim profit</th>
++              <th>Surplus → real</th>
++              <th>Company net</th>
++              <th>Simulator net</th>
++              <th>Final defense</th>
++              <th>Locked</th>
++              <th />
++            </tr>
++          </thead>
++          <tbody>
++            {rounds.map((r) => {
++              const s = r.settlement ?? {};
++              const f = r.finalInjection ?? {};
++              const open = expanded === r.battleId;
++              return (
++                <React.Fragment key={r.battleId}>
++                  <tr className="organic-row" onClick={() => onToggle(r.battleId)}>
++                    <td>#{r.battleId}</td>
++                    <td className={sideClass(s.winnerSide)}>{s.winnerSide ?? '—'}</td>
++                    <td>{money(s.realLosingVolume)}</td>
++                    <td>{money(s.commission)}</td>
++                    <td>{money(s.simProfit)}</td>
++                    <td>{money(s.surplusToReal)}</td>
++                    <td>{money(s.companyNet)}</td>
++                    <td>{money(s.simulatorNet)}</td>
++                    <td>{f.kind ? `${f.kind} ${f.side ?? ''} ${money(f.executed)}` : '—'}</td>
++                    <td>{r.lockedAt ? when(r.lockedAt) : '—'}</td>
++                    <td>{open ? '▲' : '▼'}</td>
++                  </tr>
++                  {open && (
++                    <tr>
++                      <td colSpan={11}>
++                        <pre className="organic-json">
++                          {JSON.stringify({ plan: r.plan, projection: r.projection, finalInjection: r.finalInjection, settlement: r.settlement }, null, 2)}
++                        </pre>
++                      </td>
++                    </tr>
++                  )}
++                </React.Fragment>
++              );
++            })}
++          </tbody>
++        </table>
++      </div>
++    </div>
++  );
++}
++
++/* ------------------------------------------------------------------------------------------ */
++
++export default function NpcOrganicEngine() {
++  const [view, setView] = useState('settings');
++  const [schema, setSchema] = useState(null);
++  const [doc, setDoc] = useState(null);
++  const [form, setForm] = useState(null);
++  const [errors, setErrors] = useState({});
++  const [loadError, setLoadError] = useState(null);
++  const [saving, setSaving] = useState(false);
++  const [switching, setSwitching] = useState(false);
++  const [status, setStatus] = useState(null);
++  const [live, setLive] = useState(null);
++  const [liveError, setLiveError] = useState(null);
++  const [rounds, setRounds] = useState([]);
++  const [roundsError, setRoundsError] = useState(null);
++  const [expandedRound, setExpandedRound] = useState(null);
++
++  const applyDoc = useCallback((data) => {
++    setDoc(data);
++    setForm(JSON.parse(JSON.stringify(data?.values ?? {})));
++    setErrors({});
++    setStatus({ engine: data?.engine ?? null, mode: data?.mode, version: data?.version });
++  }, []);
++
++  useEffect(() => {
++    let alive = true;
++    Promise.all([npcOrganicApi.schema(), npcOrganicApi.settings()])
++      .then(([s, d]) => {
++        if (!alive) return;
++        setSchema(s);
++        applyDoc(d);
++        setLoadError(null);
++      })
++      .catch((err) => {
++        if (!alive) return;
++        setLoadError(describeApiError(err, 'Failed to load the organic engine settings'));
++      });
++    return () => {
++      alive = false;
++    };
++  }, [applyDoc]);
++
++  usePoll(true, STATUS_POLL_MS, async () => {
++    const s = await npcOrganicApi.status();
++    setStatus(s);
++  });
++  usePoll(view === 'live', LIVE_POLL_MS, async () => {
++    try {
++      const r = await npcOrganicApi.live();
++      setLive(r.live ?? null);
++      setLiveError(null);
++    } catch (err) {
++      setLiveError(describeApiError(err, 'Failed to load live telemetry'));
++    }
++  });
++  usePoll(view === 'rounds', ROUNDS_POLL_MS, async () => {
++    try {
++      const r = await npcOrganicApi.rounds(25);
++      setRounds(r.rounds ?? []);
++      setRoundsError(null);
++    } catch (err) {
++      setRoundsError(describeApiError(err, 'Failed to load round audits'));
++    }
++  });
++
++  const onChange = useCallback((path, value) => {
++    setForm((prev) => withPath(prev ?? {}, path, value));
++    setErrors((prev) => {
++      if (!prev?.[path]) return prev;
++      const next = { ...prev };
++      delete next[path];
++      return next;
++    });
++  }, []);
++
++  const onSave = async () => {
++    if (!form) return;
++    setSaving(true);
++    try {
++      const data = await npcOrganicApi.save(form);
++      applyDoc(data);
++      toast.success(`Organic engine settings saved (v${data?.version}) and pushed to the engine`);
++    } catch (err) {
++      const fieldErrors = fieldErrorsFrom(err);
++      setErrors(fieldErrors);
++      toast.error(describeApiError(err, 'Failed to save settings'));
++    } finally {
++      setSaving(false);
++    }
++  };
++
++  const onDiscard = () => {
++    setForm(JSON.parse(JSON.stringify(doc?.values ?? {})));
++    setErrors({});
++  };
++
++  const onReset = async () => {
++    if (!window.confirm('Reset every organic engine setting to the directive defaults? The engine mode is kept.')) return;
++    setSaving(true);
++    try {
++      const data = await npcOrganicApi.reset();
++      applyDoc(data);
++      toast.success('Organic engine settings reset to defaults');
++    } catch (err) {
++      toast.error(describeApiError(err, 'Failed to reset settings'));
++    } finally {
++      setSaving(false);
++    }
++  };
++
++  const onSwitchMode = async (mode) => {
++    const text =
++      mode === 'legacy'
++        ? 'Switch to the LEGACY simulator? The organic engine stops trading immediately and the old reactive logic takes over.'
++        : 'Switch to the ORGANIC engine? The legacy simulator stops immediately and the directive engine takes over from the next poll.';
++    if (!window.confirm(text)) return;
++    setSwitching(true);
++    try {
++      const data = await npcOrganicApi.setMode(mode);
++      applyDoc(data);
++      toast.success(`NPC engine mode is now ${mode}`);
++    } catch (err) {
++      toast.error(describeApiError(err, 'Failed to switch engine mode'));
++    } finally {
++      setSwitching(false);
++    }
++  };
++
++  if (loadError) return <div className="rotation-card organic-empty">{loadError}</div>;
++  if (!schema || !doc || !form) return <div className="rotation-card organic-empty">Loading organic engine…</div>;
++
++  const mode = status?.mode ?? doc.mode;
++
++  return (
++    <div className="rotation-limits-wrapper organic-wrapper">
++      <EngineStatusBar mode={mode} savedVersion={status?.version ?? doc.version} status={status} onSwitchMode={onSwitchMode} switching={switching} />
++      <div className="organic-subnav">
++        {[
++          ['settings', 'Settings'],
++          ['live', 'Live round'],
++          ['rounds', 'Round audits'],
++        ].map(([key, label]) => (
++          <button key={key} type="button" className={`organic-subtab ${view === key ? 'active' : ''}`} onClick={() => setView(key)}>
++            {label}
++          </button>
++        ))}
++      </div>
++      {view === 'settings' && (
++        <SettingsView schema={schema} doc={doc} form={form} errors={errors} saving={saving} onChange={onChange} onSave={onSave} onDiscard={onDiscard} onReset={onReset} />
++      )}
++      {view === 'live' && <LiveView live={live} engine={status?.engine ?? null} error={liveError} />}
++      {view === 'rounds' && <RoundsView rounds={rounds} error={roundsError} expanded={expandedRound} onToggle={(id) => setExpandedRound((p) => (p === id ? null : id))} />}
++    </div>
++  );
++}
+diff --git a/src/Pages/AdminDashboard/NpcSimulator.css b/src/Pages/AdminDashboard/NpcSimulator.css
+index 0ee3e66..6ea47e6 100644
+--- a/src/Pages/AdminDashboard/NpcSimulator.css
++++ b/src/Pages/AdminDashboard/NpcSimulator.css
+@@ -1781,3 +1781,68 @@ select.modal-input.npc-pace-select option:checked {
+ .rotation-save-btn:hover {
+   opacity: 0.9;
+ }
++
++/* ===================== Organic NPC Engine tab ===================== */
++.organic-wrapper { display: flex; flex-direction: column; gap: 16px; }
++.organic-status-bar { display: flex; flex-wrap: wrap; gap: 18px; padding: 14px 18px; border-radius: 12px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); }
++.organic-status-cell { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
++.organic-status-label { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.6; }
++.organic-status-hint { font-size: 12px; opacity: 0.6; }
++.organic-pill { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.03em; border: 1px solid transparent; }
++.organic-pill-on { background: rgba(46, 204, 113, 0.15); color: #2ecc71; border-color: rgba(46, 204, 113, 0.4); }
++.organic-pill-off { background: rgba(231, 76, 60, 0.15); color: #e74c3c; border-color: rgba(231, 76, 60, 0.4); }
++.organic-pill-warn { background: rgba(241, 196, 15, 0.15); color: #f1c40f; border-color: rgba(241, 196, 15, 0.4); }
++.organic-pill-legacy { background: rgba(155, 89, 182, 0.15); color: #b784d6; border-color: rgba(155, 89, 182, 0.4); }
++.organic-pill-neutral { background: rgba(255, 255, 255, 0.08); color: inherit; border-color: rgba(255, 255, 255, 0.15); }
++.organic-subnav { display: flex; gap: 8px; flex-wrap: wrap; }
++.organic-subtab { padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.12); background: transparent; color: inherit; cursor: pointer; font-weight: 600; }
++.organic-subtab.active { background: rgba(255, 215, 0, 0.14); border-color: rgba(255, 215, 0, 0.6); }
++.organic-intro { padding: 0 4px; }
++.organic-group { margin-bottom: 4px; }
++.organic-group-desc { margin-bottom: 12px; }
++.organic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px 18px; }
++.organic-field { padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.06); background: rgba(0, 0, 0, 0.12); display: flex; flex-direction: column; gap: 6px; }
++.organic-field-changed { border-color: rgba(255, 215, 0, 0.5); }
++.organic-field-error { border-color: rgba(231, 76, 60, 0.6); }
++.organic-field-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
++.organic-field-head .rotation-label { margin: 0; }
++.organic-applies { font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; opacity: 0.8; background: rgba(255, 255, 255, 0.08); }
++.organic-applies-live { color: #2ecc71; }
++.organic-applies-next_round { color: #5dade2; }
++.organic-applies-settlement { color: #f5b041; }
++.organic-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; }
++.organic-badge-changed { background: rgba(255, 215, 0, 0.2); color: #ffd700; }
++.organic-help { margin: 0; font-size: 12px; }
++.organic-field-foot { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; opacity: 0.75; align-items: center; }
++.organic-link { background: none; border: none; color: #5dade2; cursor: pointer; padding: 0; font-size: 11px; text-decoration: underline; }
++.organic-error { color: #e74c3c; opacity: 1; }
++.organic-select { width: 100%; }
++.organic-toggle { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
++.organic-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
++.organic-toggle-track { position: relative; width: 44px; height: 24px; border-radius: 999px; background: rgba(255, 255, 255, 0.18); transition: background 0.15s; }
++.organic-toggle input:checked + .organic-toggle-track { background: #2ecc71; }
++.organic-toggle-thumb { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
++.organic-toggle input:checked + .organic-toggle-track .organic-toggle-thumb { transform: translateX(20px); }
++.organic-toggle-text { font-size: 12px; font-weight: 600; }
++.organic-footer { flex-wrap: wrap; gap: 10px; }
++.organic-footer-status { margin-right: auto; font-size: 12px; opacity: 0.75; }
++.organic-empty { padding: 24px; text-align: center; opacity: 0.8; }
++.organic-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px; }
++.organic-stat { padding: 10px 12px; border-radius: 10px; background: rgba(0, 0, 0, 0.14); border: 1px solid rgba(255, 255, 255, 0.06); }
++.organic-stat-label { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.6; margin-bottom: 4px; }
++.organic-stat-value { font-size: 15px; font-weight: 600; word-break: break-word; }
++.organic-side-buy { color: #2ecc71; }
++.organic-side-sell { color: #e74c3c; }
++.organic-phase { font-size: 12px; font-weight: 500; margin-left: 10px; opacity: 0.8; }
++.organic-potbar { display: flex; height: 26px; border-radius: 8px; overflow: hidden; font-size: 12px; font-weight: 600; }
++.organic-potbar-buy { background: rgba(46, 204, 113, 0.55); display: flex; align-items: center; padding: 0 8px; min-width: 0; white-space: nowrap; overflow: hidden; }
++.organic-potbar-sell { background: rgba(231, 76, 60, 0.55); display: flex; align-items: center; justify-content: flex-end; padding: 0 8px; min-width: 0; white-space: nowrap; overflow: hidden; }
++.organic-injection { margin-top: 10px; font-size: 13px; padding: 10px 12px; border-radius: 8px; background: rgba(255, 215, 0, 0.08); border: 1px solid rgba(255, 215, 0, 0.3); }
++.organic-table-wrap { overflow-x: auto; }
++.organic-table { width: 100%; border-collapse: collapse; font-size: 13px; }
++.organic-table th, .organic-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid rgba(255, 255, 255, 0.06); white-space: nowrap; }
++.organic-table th { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.6; }
++.organic-row { cursor: pointer; }
++.organic-row:hover { background: rgba(255, 255, 255, 0.04); }
++.organic-json { margin: 0; padding: 12px; font-size: 12px; white-space: pre-wrap; word-break: break-word; background: rgba(0, 0, 0, 0.25); border-radius: 8px; max-height: 420px; overflow: auto; }
++.npc-tab-legacy { font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; margin-left: 6px; padding: 1px 5px; border-radius: 4px; background: rgba(155, 89, 182, 0.18); color: #b784d6; vertical-align: middle; }
+diff --git a/src/Pages/AdminDashboard/npcOrganicApi.js b/src/Pages/AdminDashboard/npcOrganicApi.js
+new file mode 100644
+index 0000000..b14aee5
+--- /dev/null
++++ b/src/Pages/AdminDashboard/npcOrganicApi.js
+@@ -0,0 +1,75 @@
++import axiosInstance from '../../utils/axios';
++
++const BASE = '/admin/npc/organic';
++
++const authConfig = (extra = {}) => ({
++  ...extra,
++  headers: {
++    Authorization: localStorage.getItem('token'),
++    'Content-Type': 'application/json',
++    ...(extra.headers ?? {}),
++  },
++});
++
++/** Thin client for the Organic NPC Engine admin endpoints. Every call resolves to the response body. */
++export const npcOrganicApi = {
++  schema: () => axiosInstance.get(`${BASE}/schema`, authConfig()).then((r) => r.data),
++  settings: () => axiosInstance.get(`${BASE}/settings`, authConfig()).then((r) => r.data),
++  status: () => axiosInstance.get(`${BASE}/status`, authConfig()).then((r) => r.data),
++  save: (values) => axiosInstance.put(`${BASE}/settings`, { values }, authConfig()).then((r) => r.data),
++  reset: () => axiosInstance.post(`${BASE}/settings/reset`, {}, authConfig()).then((r) => r.data),
++  setMode: (mode) => axiosInstance.put(`${BASE}/mode`, { mode }, authConfig()).then((r) => r.data),
++  live: () => axiosInstance.get(`${BASE}/live`, authConfig()).then((r) => r.data),
++  rounds: (limit = 20) =>
++    axiosInstance.get(`${BASE}/rounds`, authConfig({ params: { limit } })).then((r) => r.data),
++};
++
++/** Reads `a.b.c` from a nested object; undefined when any segment is missing. */
++export function getPath(obj, path) {
++  let cur = obj;
++  for (const key of String(path).split('.')) {
++    if (cur == null || typeof cur !== 'object') return undefined;
++    cur = cur[key];
++  }
++  return cur;
++}
++
++/** Returns a copy of `obj` with `a.b.c` set to `value` (never mutates the input). */
++export function withPath(obj, path, value) {
++  const keys = String(path).split('.');
++  const clone = (node, depth) => {
++    if (depth === keys.length) return value;
++    const key = keys[depth];
++    const base = node && typeof node === 'object' ? { ...node } : {};
++    base[key] = clone(base[key], depth + 1);
++    return base;
++  };
++  return clone(obj, 0);
++}
++
++/** Human message for an axios error: joins the API's per-field `errors` list when present. */
++export function describeApiError(err, fallback) {
++  const data = err?.response?.data;
++  const msg = data?.message;
++  if (typeof msg === 'string' && msg.trim()) return msg;
++  if (Array.isArray(msg) && msg.length) return msg.join(' · ');
++  if (msg && typeof msg === 'object' && typeof msg.message === 'string') return msg.message;
++  return err?.message || fallback;
++}
++
++const FIELD_LINE = /^([a-zA-Z0-9_.]+):\s*(.+)$/;
++
++/**
++ * Per-field error map from a 400 response. The API answers with one
++ * `"<path>: <message>"` line per invalid field (`message` is an array of strings).
++ */
++export function fieldErrorsFrom(err) {
++  const data = err?.response?.data;
++  const lines = Array.isArray(data?.message) ? data.message : typeof data?.message === 'string' ? [data.message] : [];
++  const out = {};
++  for (const line of lines) {
++    const m = typeof line === 'string' ? line.match(FIELD_LINE) : null;
++    if (m) out[m[1]] = m[2];
++  }
++  return out;
++}
+diff --git a/src/Pages/AdminDashboard/npcSimulator.jsx b/src/Pages/AdminDashboard/npcSimulator.jsx
+index c62077b..a0da608 100644
+--- a/src/Pages/AdminDashboard/npcSimulator.jsx
++++ b/src/Pages/AdminDashboard/npcSimulator.jsx
+@@ -26,6 +26,7 @@ import {
+ 
+ import { toast } from "react-toastify";
+ import { PermissionGate } from "../../hooks/usePermission";
++import NpcOrganicEngine from "./NpcOrganicEngine";
+ import {
+   previewRounds,
+   volumeShapeWarnings,
+@@ -1078,6 +1079,14 @@ const NpcSimulator = () => {
+         >
+           NPC TRADERS
+         </button>
++        <PermissionGate permission="npcSimulator.view">
++          <button
++            className={`npc-tab ${activeTab === 'organic_engine' ? 'active' : ''}`}
++            onClick={() => setActiveTab('organic_engine')}
++          >
++            Organic Engine
++          </button>
++        </PermissionGate>
+         <PermissionGate permission="npcSimulator.rotationLimits">
+           <button
+             className={`npc-tab ${activeTab === 'rotation_limits' ? 'active' : ''}`}
+@@ -1091,7 +1100,7 @@ const NpcSimulator = () => {
+             className={`npc-tab ${activeTab === 'volume_distribution' ? 'active' : ''}`}
+             onClick={() => setActiveTab('volume_distribution')}
+           >
+-            Volume Distribution
++            Volume Distribution <span className="npc-tab-legacy">legacy</span>
+           </button>
+         </PermissionGate>
+         <PermissionGate permission="npcSimulator.poolBalance">
+@@ -1099,7 +1108,7 @@ const NpcSimulator = () => {
+             className={`npc-tab ${activeTab === 'pool_balance' ? 'active' : ''}`}
+             onClick={() => setActiveTab('pool_balance')}
+           >
+-            Pool Balance
++            Pool Balance <span className="npc-tab-legacy">legacy</span>
+           </button>
+         </PermissionGate>
+         <PermissionGate permission="npcSimulator.edit">
+@@ -1107,11 +1116,17 @@ const NpcSimulator = () => {
+             className={`npc-tab ${activeTab === 'npc_behavior' ? 'active' : ''}`}
+             onClick={() => setActiveTab('npc_behavior')}
+           >
+-            NPC Behavior
++            NPC Behavior <span className="npc-tab-legacy">legacy</span>
+           </button>
+         </PermissionGate>
+       </div>
+ 
++      {activeTab === 'organic_engine' && (
++        <PermissionGate permission="npcSimulator.view">
++          <NpcOrganicEngine />
++        </PermissionGate>
++      )}
++
+       {activeTab === 'npc_traders' && (
+         <>
+ 
+-- 
+2.43.0
+

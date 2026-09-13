@@ -67,10 +67,14 @@ const live = async (adminToken) => (await api("GET", "/admin/npc/organic/live", 
     check("demo API login", !!demo);
     if (!admin || !demo) return finish();
 
+    const adminOnly = process.env.SMOKE_ADMIN_ONLY === "1";
+    let battleId = null;
+    let versionAfterSet = null;
+    if (!adminOnly) {
     // 1. make the lock window visible ----------------------------------------------------------
     const set = await api("PUT", "/admin/npc/organic/settings", { values: { defenses: { finalInjectionLeadMs: 3000 } } }, admin);
     check("admin API: PUT finalInjectionLeadMs=3000 accepted", set.status === 200 && set.json?.values?.defenses?.finalInjectionLeadMs === 3000, `http ${set.status} v${set.json?.version}`);
-    const versionAfterSet = set.json?.version;
+    versionAfterSet = set.json?.version;
     await sleep(1500);
     const st = (await api("GET", "/admin/npc/organic/status", null, admin)).json;
     check("engine applied the pushed version within 2 s", st?.engine?.settingsVersion === versionAfterSet, `engine v${st?.engine?.settingsVersion} vs saved v${versionAfterSet}, mode ${st?.mode}, active ${st?.engine?.active}`);
@@ -86,7 +90,7 @@ const live = async (adminToken) => (await api("GET", "/admin/npc/organic/live", 
     }
     check("a fresh organic round started", !!l && l.battleId !== startBattle, l ? `round #${l.battleId} elapsed ${l.elapsedSec}s, lead ${l.lead?.side} ${l.lead?.sharePct}%` : "no live telemetry");
     if (!l) return finish();
-    const battleId = l.battleId;
+    battleId = l.battleId;
     report.notes.battleId = battleId;
     report.notes.plan = l.plan;
 
@@ -180,6 +184,11 @@ const live = async (adminToken) => (await api("GET", "/admin/npc/organic/live", 
     await shot(page, "npc-03-after-round.png");
     check("PWA: no page errors during the round", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
     await ctx.close();
+    } else {
+      battleId = Number(psql(`select "battleId" from npc_round_audit where settlement is not null order by "battleId" desc limit 1`)) || null;
+      versionAfterSet = (await api("GET", "/admin/npc/organic/status", null, admin)).json?.version ?? 0;
+      check("admin-only run: latest settled organic round found", battleId != null, `#${battleId}, saved v${versionAfterSet}`);
+    }
 
     // 6. admin UI ------------------------------------------------------------------------------
     const actx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -193,7 +202,13 @@ const live = async (adminToken) => (await api("GET", "/admin/npc/organic/live", 
     await ap.click('button[type="submit"].auth-button');
     await ap.waitForURL((u) => u.pathname.startsWith("/admin"), { timeout: 30000 }).catch(() => {});
     await ap.waitForTimeout(2500);
-    await ap.getByText("NPC Simulator", { exact: false }).first().click({ timeout: 15000 }).catch((e) => adminErrors.push("menu: " + e.message.split("\n")[0]));
+    const menuItem = ap.getByText("NPC Simulator", { exact: false }).first();
+    if (!(await menuItem.isVisible().catch(() => false))) {
+      // the entry lives in the collapsible "User Management" group
+      await ap.getByText("User Management", { exact: false }).first().click({ timeout: 10000 }).catch((e) => adminErrors.push("group: " + e.message.split("\n")[0]));
+      await ap.waitForTimeout(600);
+    }
+    await menuItem.click({ timeout: 15000 }).catch((e) => adminErrors.push("menu: " + e.message.split("\n")[0]));
     await ap.waitForTimeout(1500);
     const tab = ap.locator("button.npc-tab", { hasText: "Organic Engine" }).first();
     check("admin: Organic Engine tab present", (await tab.count()) > 0);
@@ -221,7 +236,7 @@ const live = async (adminToken) => (await api("GET", "/admin/npc/organic/live", 
     await ap.waitForTimeout(1500);
     const leadInput = ap.locator("#organic-defenses-finalInjectionLeadMs");
     check("admin: lead-time field is editable", (await leadInput.count()) > 0);
-    await leadInput.fill("150");
+    await leadInput.fill(adminOnly ? "151" : "150");
     await ap.waitForTimeout(300);
     const unsaved = await ap.locator(".organic-badge-changed").count();
     check("admin: editing marks the field unsaved", unsaved > 0, `${unsaved} badge(s)`);
@@ -229,11 +244,16 @@ const live = async (adminToken) => (await api("GET", "/admin/npc/organic/live", 
     await ap.waitForTimeout(2500);
     await shot(ap, "npc-07-admin-saved.png");
     const after = (await api("GET", "/admin/npc/organic/settings", null, admin)).json;
-    check("admin: Save pushed the value (API shows 150, version bumped)", after?.values?.defenses?.finalInjectionLeadMs === 150 && after?.version > versionAfterSet, `v${after?.version} lead ${after?.values?.defenses?.finalInjectionLeadMs}`);
+    const expectLead = adminOnly ? 151 : 150;
+    check("admin: Save pushed the value (API shows it, version bumped)", after?.values?.defenses?.finalInjectionLeadMs === expectLead && after?.version > versionAfterSet, `v${after?.version} lead ${after?.values?.defenses?.finalInjectionLeadMs}`);
     await sleep(1500);
     const st2 = (await api("GET", "/admin/npc/organic/status", null, admin)).json;
     check("engine applied the UI-saved version", st2?.engine?.settingsVersion === after?.version, `engine v${st2?.engine?.settingsVersion}`);
     check("admin: no page errors", adminErrors.length === 0, adminErrors.slice(0, 3).join(" | "));
+    if (adminOnly) {
+      const back = await api("PUT", "/admin/npc/organic/settings", { values: { defenses: { finalInjectionLeadMs: 150 } } }, admin);
+      check("admin-only run: lead time restored to 150 ms via API", back.json?.values?.defenses?.finalInjectionLeadMs === 150, `v${back.json?.version}`);
+    }
     await actx.close();
   } catch (e) {
     check("smoke aborted", false, String(e && e.stack || e).split("\n").slice(0, 3).join(" "));

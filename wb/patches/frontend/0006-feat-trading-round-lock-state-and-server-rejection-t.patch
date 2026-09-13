@@ -1,0 +1,282 @@
+From 053445bbf650883155ed0a9d5e46224c184889ee Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 13 Sep 2026 22:09:50 +0000
+Subject: [PATCH] feat(trading): round lock state and server rejection toasts
+
+Handles the new battleLocked socket event: the trade buttons switch to LOCKED and
+are disabled until the next round starts (also honoured when the snapshot carries
+locked: true). Server-side order rejections (ROUND_LOCKED, BATTLE_FROZEN,
+ORDER_FREEZE, LAST_SECOND_SNIPE_LOCK, throttling, insufficient balance) now show a
+toast instead of being dropped silently. The snapshot UI signature includes locked
+and trader_count so those changes reach the store.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Dzk243ADEkJuWxdHGG3hNv
+---
+ src/components/TradingPanel.jsx          | 19 ++++++++----
+ src/live/hooks/useBattleSocket.js        |  3 ++
+ src/live/services/tradeRejectionToast.js | 38 ++++++++++++++++++++++++
+ src/live/socket/socketEvents.js          |  2 ++
+ src/stores/matchStore.js                 | 18 ++++++++++-
+ src/utils/useWebSocket.js                | 16 +++++++++-
+ 6 files changed, 89 insertions(+), 7 deletions(-)
+ create mode 100644 src/live/services/tradeRejectionToast.js
+
+diff --git a/src/components/TradingPanel.jsx b/src/components/TradingPanel.jsx
+index ff9e5d6..be44a5e 100644
+--- a/src/components/TradingPanel.jsx
++++ b/src/components/TradingPanel.jsx
+@@ -181,11 +181,12 @@ const TradingPanel = memo(({
+   const navigate = useNavigate();
+   const balanceEquityDisplay = usePortfolioDisplay();
+   const ws = useWebSocketContext();
+-  const { cooldownActive, finalBattleSnapshot, freeTapsLeft } = matchStore(
++  const { cooldownActive, finalBattleSnapshot, freeTapsLeft, roundLock } = matchStore(
+     useShallow((s) => ({
+       cooldownActive: s.cooldownDisplay?.active ?? false,
+       finalBattleSnapshot: s.finalBattleSnapshot,
+       freeTapsLeft: s.freeTapsLeft,
++      roundLock: s.roundLock,
+     }))
+   );
+   // Prefer auth balance (trading total); matchStore can lag or briefly carry withdraw-only values after round boundaries.
+@@ -729,8 +730,16 @@ const TradingPanel = memo(({
+     }
+   }, [battleId, snapshot?.battle_id]);
+ 
++  /* Server-side round lock (organic NPC engine): buttons go dark the instant the lock event
++   * arrives, and stay dark if the snapshot itself carries `locked: true`. */
++  const currentBattleId = Number(battleId ?? snapshot?.battle_id ?? NaN);
++  const roundLocked =
++    Boolean(snapshot?.locked) ||
++    (roundLock != null &&
++      (!Number.isFinite(currentBattleId) || Number(roundLock.battle_id) === currentBattleId));
+   const tradeDisabled =
+     Boolean(timer?.is_finalize ?? snapshot?.is_finalize) ||
++    roundLocked ||
+     (hasServerRemaining && Number(timerRemaining) <= 0);
+ 
+   const { visibleBuyPot, visibleSellPot } = useVisiblePots(snapshot);
+@@ -1026,7 +1035,7 @@ const TradingPanel = memo(({
+                   disabled={freeTapLimitReached || cooldownActive || tradeDisabled}
+                   style={freeTapButtonStyle}
+                 >
+-                  FREE SELL
++                  {roundLocked ? 'LOCKED' : 'FREE SELL'}
+                 </button>
+                 <div className="free-taps-remaining-counter">
+                   <div className="tap-count">
+@@ -1044,7 +1053,7 @@ const TradingPanel = memo(({
+                   disabled={freeTapLimitReached || cooldownActive || tradeDisabled}
+                   style={freeTapButtonStyle}
+                 >
+-                  FREE BUY
++                  {roundLocked ? 'LOCKED' : 'FREE BUY'}
+                 </button>
+               </div>
+             ) : (
+@@ -1064,7 +1073,7 @@ const TradingPanel = memo(({
+                   disabled={user_status === "account_block" || cooldownActive || tradeDisabled}
+                   style={realTradeButtonStyle}
+                 >
+-                  SELL
++                  {roundLocked ? 'LOCKED' : 'SELL'}
+                 </button>
+                 <div className="amount-selector">
+                   <input
+@@ -1086,7 +1095,7 @@ const TradingPanel = memo(({
+                   disabled={user_status === "account_block" || cooldownActive || tradeDisabled}
+                   style={realTradeButtonStyle}
+                 >
+-                  BUY
++                  {roundLocked ? 'LOCKED' : 'BUY'}
+                 </button>
+               </div>
+             )
+diff --git a/src/live/hooks/useBattleSocket.js b/src/live/hooks/useBattleSocket.js
+index 9a49815..a31f706 100644
+--- a/src/live/hooks/useBattleSocket.js
++++ b/src/live/hooks/useBattleSocket.js
+@@ -13,6 +13,7 @@ export function registerBattleSocket(socket, handlers) {
+     onTopPerformers,
+     onTransactionCelebration,
+     onActiveTrades,
++    onBattleLocked,
+   } = handlers;
+ 
+   socket.on('battleSnapshot', onBattleSnapshot);
+@@ -29,6 +30,7 @@ export function registerBattleSocket(socket, handlers) {
+   socket.on('topPerformers', onTopPerformers);
+   socket.on('transactionCelebration', onTransactionCelebration);
+   socket.on('trade:active:stream', onActiveTrades);
++  if (onBattleLocked) socket.on('battleLocked', onBattleLocked);
+ 
+   return () => {
+     socket.off('battleSnapshot', onBattleSnapshot);
+@@ -45,6 +47,7 @@ export function registerBattleSocket(socket, handlers) {
+     socket.off('topPerformers', onTopPerformers);
+     socket.off('transactionCelebration', onTransactionCelebration);
+     socket.off('trade:active:stream', onActiveTrades);
++    if (onBattleLocked) socket.off('battleLocked', onBattleLocked);
+   };
+ }
+ 
+diff --git a/src/live/services/tradeRejectionToast.js b/src/live/services/tradeRejectionToast.js
+new file mode 100644
+index 0000000..4130bef
+--- /dev/null
++++ b/src/live/services/tradeRejectionToast.js
+@@ -0,0 +1,38 @@
++import { toast } from '../../utils/toast';
++
++/**
++ * Server-side order rejections the trading UI should explain instead of dropping silently.
++ * Codes come from the API (`error` field of the WsException payload).
++ */
++const MESSAGES = {
++  ROUND_LOCKED: 'The round is locked for its final moment — no more orders.',
++  BATTLE_FROZEN: 'The round is closing — orders are paused until the next round.',
++  ORDER_FREEZE: 'Orders are closed for the last seconds of this round.',
++  LAST_SECOND_SNIPE_LOCK: 'No further orders on this round after your last-second stake.',
++  AGGRESSIVE_TRADE_THROTTLED: 'Slow down — that order was throttled. Try again in a moment.',
++  'Insufficient balance': 'Insufficient balance for this order.',
++  'Battle is not active': 'This round has already ended.',
++};
++
++const REPEAT_GUARD_MS = 1500;
++let lastCode = null;
++let lastAt = 0;
++
++/**
++ * Shows one toast per rejection code (rate-limited so a burst of taps on a locked round
++ * produces one message).
++ *
++ * @returns {boolean} true when the error was a known trade rejection.
++ */
++export function handleTradeRejection(err) {
++  const code = err?.code ?? err?.error;
++  if (typeof code !== 'string') return false;
++  const message = MESSAGES[code];
++  if (!message) return false;
++  const now = Date.now();
++  if (code === lastCode && now - lastAt < REPEAT_GUARD_MS) return true;
++  lastCode = code;
++  lastAt = now;
++  toast.info(typeof err?.message === 'string' && err.message.trim() ? err.message : message);
++  return true;
++}
+diff --git a/src/live/socket/socketEvents.js b/src/live/socket/socketEvents.js
+index fdf46b1..742937b 100644
+--- a/src/live/socket/socketEvents.js
++++ b/src/live/socket/socketEvents.js
+@@ -51,6 +51,8 @@ export const MAIN_EVENTS = {
+   // Battle end / cooldown
+   battleEnd: 'battleEnd',
+   battleEndDetails: 'battleEndDetails',
++  /** Server → client: the round is locked for its final moment; no more orders. */
++  battleLocked: 'battleLocked',
+   cooldownTick: 'cooldownTick',
+   cooldownEnded: 'cooldownEnded',
+ 
+diff --git a/src/stores/matchStore.js b/src/stores/matchStore.js
+index 5a12006..e66fe01 100644
+--- a/src/stores/matchStore.js
++++ b/src/stores/matchStore.js
+@@ -53,8 +53,10 @@ function liveSnapshotUiSignature(s) {
+     s.battle_freeze ?? s.battleFreeze ?? s.is_battle_freeze ?? s.isBattleFreeze ?? s.freeze,
+   );
+   const fa = String(s.freeze_at ?? '');
++  const locked = Boolean(s.locked);
++  const traders = String(s.trader_count ?? '');
+   const n = (v) => (Number.isFinite(v) ? String(Math.round(v * 1e6) / 1e6) : '');
+-  return `${bid}|${n(buy)}|${n(sell)}|${n(freeBuy)}|${n(freeSell)}|${n(tapsLeft)}|${n(price)}|${end}|${pct}|${totalDur}|${st}|${isFin}|${fr}|${fa}`;
++  return `${bid}|${n(buy)}|${n(sell)}|${n(freeBuy)}|${n(freeSell)}|${n(tapsLeft)}|${n(price)}|${end}|${pct}|${totalDur}|${st}|${isFin}|${fr}|${fa}|${locked}|${traders}`;
+ }
+ 
+ /** Skip matchStore.timer updates when countdown / freeze UI would not change (reduces Android jank). */
+@@ -112,6 +114,8 @@ export const matchStore = create(
+   lastEntryMultiplier: null,
+   /** Remaining free taps for current battle (from snapshot / freeTap socket). */
+   freeTapsLeft: null,
++  /** `{ battle_id, locked_at_ms }` once the server locks the round for its final moment; null otherwise. */
++  roundLock: null,
+   battleEpoch: 0,
+       setPrice: (payload) => set({ price: payload }),
+       setPriceColorType: (payload) => set({ priceColorType: payload }),
+@@ -126,6 +130,18 @@ export const matchStore = create(
+         set({ timer: payload });
+       },
+       setBattleId: (payload) => set({ battleId: payload }),
++      setRoundLock: (payload) => {
++        const battleId = Number(payload?.battle_id ?? payload?.battleId);
++        if (!Number.isFinite(battleId) || battleId <= 0) return;
++        const prev = get().roundLock;
++        if (prev && Number(prev.battle_id) === battleId) return;
++        const lockedAt = Number(payload?.locked_at_ms);
++        set({ roundLock: { battle_id: battleId, locked_at_ms: Number.isFinite(lockedAt) ? lockedAt : Date.now() } });
++      },
++      clearRoundLock: () => {
++        if (get().roundLock == null) return;
++        set({ roundLock: null });
++      },
+       setBattleEndData: (payload) =>
+         set((state) => {
+           if (payload == null) return { battleEndData: payload };
+diff --git a/src/utils/useWebSocket.js b/src/utils/useWebSocket.js
+index c3c0105..6681b52 100644
+--- a/src/utils/useWebSocket.js
++++ b/src/utils/useWebSocket.js
+@@ -68,6 +68,7 @@ import { registerBattleSocket } from "../live/hooks/useBattleSocket";
+ import { registerChartSocket } from "../live/hooks/useChartSocket";
+ import { registerPortfolioSocket } from "../live/hooks/usePortfolioSocket";
+ import { handleSocketException } from "../live/services/guestSocketError";
++import { handleTradeRejection } from "../live/services/tradeRejectionToast";
+ import { registerNotificationSocket } from "../live/hooks/useNotificationSocket";
+ import { registerCooldownSync } from "../live/hooks/useCooldownSync";
+ import { registerChatSocket } from "../live/hooks/useChatSocket";
+@@ -852,6 +853,7 @@ export default function useWebSocket(token = null, options = null) {
+       const incomingBattleId = normalizeBattleId(normalizedSnapshot);
+       if (incomingBattleId && Number(incomingBattleId) !== battleIdRef.current) {
+         cooldownFreezeRef.current = false;
++        matchStore.getState().clearRoundLock();
+         const prev = battleIdRef.current;
+         const id = Number(incomingBattleId);
+         applyBattleSnapshotBattleIdSwitch({
+@@ -881,6 +883,7 @@ export default function useWebSocket(token = null, options = null) {
+       const id = Number(data.battle_id);
+       if (!id) return;
+       cooldownFreezeRef.current = false;
++      matchStore.getState().clearRoundLock();
+       /* battleSnapshot often updates battleId first; still clear stale multiplier from the previous battle. */
+       if (id === battleIdRef.current) {
+         matchStore.getState().clearEntryMultiplier();
+@@ -1213,7 +1216,17 @@ export default function useWebSocket(token = null, options = null) {
+     };
+ 
+     const onException = (err) => {
+-      handleSocketException(err);
++      if (handleSocketException(err)) return;
++      handleTradeRejection(err);
++    };
++
++    /** Organic engine locked the round: trade buttons go dark until the next round starts. */
++    const onBattleLocked = (data) => {
++      realtimeTelemetry.incrementEventRate("socket.battleLocked");
++      const id = Number(data?.battle_id ?? data?.battleId);
++      if (!Number.isFinite(id) || id <= 0) return;
++      if (battleIdRef.current != null && Number(battleIdRef.current) !== id) return;
++      matchStore.getState().setRoundLock({ battle_id: id, locked_at_ms: data?.locked_at_ms });
+     };
+ 
+     const onBalanceEquityAndPnL = (payload) => {
+@@ -1361,6 +1374,7 @@ export default function useWebSocket(token = null, options = null) {
+       onTopPerformers,
+       onTransactionCelebration,
+       onActiveTrades,
++      onBattleLocked,
+     });
+     const unregisterPortfolioSocket = registerPortfolioSocket(socket, {
+       onEquityPnL,
+-- 
+2.43.0
+
