@@ -1,7 +1,7 @@
 # product repos are cloned by bootstrap.sh, never vendored here
-backend/
-admin/
-frontend/
+/backend/
+/admin/
+/frontend/
 # generated local secrets and runtime state
 env/
 run/pids/

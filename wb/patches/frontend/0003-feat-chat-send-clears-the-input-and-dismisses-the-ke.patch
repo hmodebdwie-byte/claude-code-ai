@@ -1,0 +1,76 @@
+From 6bda41aeb56f92b65c32a4681cdaf630fa5d61ba Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 15:07:27 +0000
+Subject: [PATCH 3/5] feat(chat): send clears the input and dismisses the
+ keyboard; sender name shown above the message (TikTok-style)
+
+Service agreement (Aug 2026) items: the input previously re-focused itself after send (keyboard stayed open) and the name/time row was rendered below the message text.
+---
+ src/components/ChatInput.jsx | 9 +++------
+ src/components/ChatPanel.css | 5 ++++-
+ src/components/ChatPanel.jsx | 3 ++-
+ 3 files changed, 9 insertions(+), 8 deletions(-)
+
+diff --git a/src/components/ChatInput.jsx b/src/components/ChatInput.jsx
+index 93990f0..8883f83 100644
+--- a/src/components/ChatInput.jsx
++++ b/src/components/ChatInput.jsx
+@@ -19,12 +19,9 @@ const ChatInput = memo(({ sendChat, userName, userId, disabled = false }) => {
+     if (message.trim() && sendChat) {
+       sendChat(message, userName, userId);
+       setMessage('');
+-      // Keep focus on input to prevent keyboard from closing
+-      setTimeout(() => {
+-        if (inputRef.current) {
+-          inputRef.current.focus({ preventScroll: true });
+-        }
+-      }, 10);
++      // Service agreement (Aug 2026): sending clears the input AND dismisses
++      // the keyboard, so the chat feed is visible again immediately.
++      inputRef.current?.blur();
+     }
+   }, [disabled, isGuest, navigate, message, sendChat, userName, userId]);
+ 
+diff --git a/src/components/ChatPanel.css b/src/components/ChatPanel.css
+index c5a1c5e..dec7d59 100644
+--- a/src/components/ChatPanel.css
++++ b/src/components/ChatPanel.css
+@@ -93,10 +93,13 @@
+     align-items: center;
+     justify-content: flex-start;
+     gap: 8px;
+-    margin-top: 4px;
++    margin-bottom: 3px;
+     font-size: 11px;
+     opacity: 0.7;
+ }
++.chat-text {
++    display: block;
++}
+ 
+ .chat-message-container.current-user-container .chat-header-info {
+     flex-direction: row-reverse;
+diff --git a/src/components/ChatPanel.jsx b/src/components/ChatPanel.jsx
+index c37e841..e980661 100644
+--- a/src/components/ChatPanel.jsx
++++ b/src/components/ChatPanel.jsx
+@@ -31,7 +31,7 @@ const ChatRow = memo(function ChatRow({ msg, userId }) {
+           decoding="async"
+         />
+         <div className="chat-message">
+-          <span>{msg.message}</span>
++          {/* Sender name sits ABOVE the message (TikTok-style layout, service agreement Aug 2026). */}
+           <div className="chat-header-info">
+             <span className="chat-user">{truncateDisplayName(msg.user_name, 10)}</span>
+             <span className="chat-time">
+@@ -41,6 +41,7 @@ const ChatRow = memo(function ChatRow({ msg, userId }) {
+               })}
+             </span>
+           </div>
++          <span className="chat-text">{msg.message}</span>
+         </div>
+       </div>
+     </div>
+-- 
+2.43.0
+

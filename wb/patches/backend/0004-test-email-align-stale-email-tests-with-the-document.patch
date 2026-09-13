@@ -1,0 +1,85 @@
+From ff61a5eee9ec1b4316a111f63c74028a595c60f5 Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 15:09:49 +0000
+Subject: [PATCH 4/4] test(email): align stale email tests with the documented
+ rendering and naming contracts
+
+- email-events.spec: allow camelCase event segments (password.temporarySet is a stored mapping key; renaming would need a data migration).
+- email-event.listener.spec: HTML argument is the body wrapped in the branded master template; unresolved {{tags}} are stripped by design (email-template.render.ts). Assertions now check subject/text exactly and HTML by content instead of freezing incidental markup.
+---
+ .../common/email/email-event.listener.spec.ts | 31 +++++++++++--------
+ .../shared/src/email/email-events.spec.ts     |  6 +++-
+ 2 files changed, 23 insertions(+), 14 deletions(-)
+
+diff --git a/apps/api/src/common/email/email-event.listener.spec.ts b/apps/api/src/common/email/email-event.listener.spec.ts
+index e3b648a..00e3b72 100644
+--- a/apps/api/src/common/email/email-event.listener.spec.ts
++++ b/apps/api/src/common/email/email-event.listener.spec.ts
+@@ -34,15 +34,18 @@ describe('EmailEventListener.handle', () => {
+         });
+ 
+         expect(sendCustomEmail).toHaveBeenCalledTimes(1);
+-        expect(sendCustomEmail).toHaveBeenCalledWith(
+-            'user@example.com',
+-            'Hi Jordan',
+-            'Amount: $50.00',
+-            'Amount: $50.00',
+-        );
++        // Rendering contract (email-template.render.ts): subject and plain text
++        // are the substituted template; the HTML argument is the substituted
++        // body wrapped in the shared branded master template.
++        const [to, subject, text, html] = sendCustomEmail.mock.calls[0];
++        expect(to).toBe('user@example.com');
++        expect(subject).toBe('Hi Jordan');
++        expect(text).toBe('Amount: $50.00');
++        expect(html).toContain('Amount: $50.00');
++        expect(html).toMatch(/<html[\s>]/i);
+     });
+ 
+-    it('a tag present in template but absent from vars is left untouched', async () => {
++    it('a tag present in template but absent from vars is stripped (never reaches the inbox)', async () => {
+         const findUnique = jest.fn().mockResolvedValue({
+             enabled: true,
+             templateId: 5,
+@@ -56,12 +59,14 @@ describe('EmailEventListener.handle', () => {
+             vars: { user_name: 'Jordan' },
+         });
+ 
+-        expect(sendCustomEmail).toHaveBeenCalledWith(
+-            'user@example.com',
+-            'Hi Jordan {{missing_tag}}',
+-            'b',
+-            'b',
+-        );
++        // substituteVars strips any unresolved {{tag}} so raw placeholder syntax
++        // never reaches a recipient; the trailing space before it remains.
++        const [to, subject, text, html] = sendCustomEmail.mock.calls[0];
++        expect(to).toBe('user@example.com');
++        expect(subject).toBe('Hi Jordan ');
++        expect(subject).not.toContain('{{');
++        expect(text).toBe('b');
++        expect(html).toContain('b');
+     });
+ 
+     it('no mapping row: does not send, does not throw', async () => {
+diff --git a/packages/shared/src/email/email-events.spec.ts b/packages/shared/src/email/email-events.spec.ts
+index 757e95b..98706a2 100644
+--- a/packages/shared/src/email/email-events.spec.ts
++++ b/packages/shared/src/email/email-events.spec.ts
+@@ -12,8 +12,12 @@ test('EMAIL_EVENT_NAMES matches Object.values(EMAIL_EVENTS)', () => {
+ });
+ 
+ test('every event name is a non-empty dot-namespaced string', () => {
++    // Registry names are `<area>.<event>`; the event part is camelCase
++    // (e.g. `password.temporarySet`). Exact strings are stored in
++    // EmailEventMapping.eventName, so renaming an existing entry is a data
++    // migration, not a test fix.
+     for (const name of EMAIL_EVENT_NAMES) {
+         assert.ok(name.length > 0);
+-        assert.match(name, /^[a-z]+\.[a-z]+$/);
++        assert.match(name, /^[a-z]+\.[a-z][A-Za-z]*$/);
+     }
+ });
+-- 
+2.43.0
+

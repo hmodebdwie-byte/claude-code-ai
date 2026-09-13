@@ -1,0 +1,310 @@
+From 88e47fcd46c8e2d45ae16b5b214199aeb31d16b9 Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 15:07:27 +0000
+Subject: [PATCH 4/5] feat(trading): honour the Trade confirmation setting with
+ a confirmation sheet before real-money orders
+
+User.tradeConfirmation was stored and toggleable in Settings but never read. When it is on, BUY/SELL now opens TradeConfirmSheet (side, stake, balance after; Enter/Escape; nothing debited until confirmed). Free Tap is unaffected.
+---
+ src/components/TradeConfirmSheet.css | 115 +++++++++++++++++++++++++++
+ src/components/TradeConfirmSheet.jsx |  91 +++++++++++++++++++++
+ src/components/TradingPanel.jsx      |  29 ++++++-
+ 3 files changed, 234 insertions(+), 1 deletion(-)
+ create mode 100644 src/components/TradeConfirmSheet.css
+ create mode 100644 src/components/TradeConfirmSheet.jsx
+
+diff --git a/src/components/TradeConfirmSheet.css b/src/components/TradeConfirmSheet.css
+new file mode 100644
+index 0000000..7073932
+--- /dev/null
++++ b/src/components/TradeConfirmSheet.css
+@@ -0,0 +1,115 @@
++/* Trade confirmation bottom sheet. Prefixed `trade-confirm-*` — no CSS-module
++   scoping in this repo. Side colours follow the Live Position spec
++   (BUY #009FEF, SELL #FF005C). */
++
++.trade-confirm-overlay {
++    position: fixed;
++    inset: 0;
++    z-index: 5000;
++    display: flex;
++    align-items: flex-end;
++    justify-content: center;
++    background: rgba(0, 0, 0, 0.6);
++    backdrop-filter: blur(6px);
++    animation: trade-confirm-overlay-in 0.18s ease-out;
++}
++
++.trade-confirm-sheet {
++    --tc-side: #009FEF;
++    width: 100%;
++    max-width: 480px;
++    padding: 10px 20px calc(20px + env(safe-area-inset-bottom));
++    background: #1C1C1E;
++    border-radius: 20px 20px 0 0;
++    border-top: 1px solid rgba(255, 255, 255, 0.08);
++    animation: trade-confirm-sheet-in 0.22s ease-out;
++    box-sizing: border-box;
++}
++.trade-confirm-sheet.trade-confirm-sell { --tc-side: #FF005C; }
++
++.trade-confirm-grabber {
++    width: 36px;
++    height: 4px;
++    margin: 0 auto 14px;
++    border-radius: 999px;
++    background: #48484A;
++}
++
++.trade-confirm-title {
++    margin: 0;
++    font-size: 18px;
++    font-weight: 700;
++    color: #fff;
++    letter-spacing: 0.01em;
++}
++.trade-confirm-subtitle {
++    margin: 4px 0 16px;
++    font-size: 13px;
++    line-height: 1.4;
++    color: #8E8E93;
++}
++
++.trade-confirm-rows {
++    margin: 0 0 16px;
++    padding: 4px 0;
++    border: 1px solid #2B2B2E;
++    border-radius: 10px;
++}
++.trade-confirm-row {
++    display: flex;
++    justify-content: space-between;
++    align-items: baseline;
++    padding: 10px 14px;
++}
++.trade-confirm-row + .trade-confirm-row { border-top: 1px solid #2B2B2E; }
++.trade-confirm-row dt { margin: 0; font-size: 13px; color: #8E8E93; }
++.trade-confirm-row dd {
++    margin: 0;
++    font-size: 15px;
++    font-weight: 600;
++    color: #fff;
++    font-variant-numeric: tabular-nums;
++}
++.trade-confirm-side { color: var(--tc-side) !important; }
++.trade-confirm-negative { color: #C50011 !important; }
++
++.trade-confirm-actions {
++    display: grid;
++    grid-template-columns: 1fr 2fr;
++    gap: 10px;
++}
++.trade-confirm-cancel,
++.trade-confirm-go {
++    height: 46px;
++    border-radius: 10px;
++    font-size: 15px;
++    font-weight: 700;
++    cursor: pointer;
++    border: 1px solid transparent;
++}
++.trade-confirm-cancel {
++    background: transparent;
++    color: #fff;
++    border-color: #3A3A3C;
++}
++.trade-confirm-go {
++    background: var(--tc-side);
++    color: #07090d;
++}
++.trade-confirm-go:focus-visible,
++.trade-confirm-cancel:focus-visible {
++    outline: 2px solid #fff;
++    outline-offset: 2px;
++}
++.trade-confirm-hint {
++    margin: 12px 0 0;
++    text-align: center;
++    font-size: 11px;
++    color: #636366;
++}
++
++@keyframes trade-confirm-overlay-in { from { opacity: 0; } to { opacity: 1; } }
++@keyframes trade-confirm-sheet-in { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
++@media (prefers-reduced-motion: reduce) {
++    .trade-confirm-overlay, .trade-confirm-sheet { animation: none; }
++}
+diff --git a/src/components/TradeConfirmSheet.jsx b/src/components/TradeConfirmSheet.jsx
+new file mode 100644
+index 0000000..58e7b73
+--- /dev/null
++++ b/src/components/TradeConfirmSheet.jsx
+@@ -0,0 +1,91 @@
++import React, { useEffect, useRef } from 'react';
++import './TradeConfirmSheet.css';
++
++/**
++ * Trade confirmation (service agreement, Aug 2026 — "Trade Confirmation per the
++ * latest Figma frame"). Shown only when the trader has switched on
++ * Settings → Trade confirmation (`User.tradeConfirmation`); the preference
++ * existed but was never read before this sheet.
++ *
++ * Purely presentational: the caller decides to open it and places the order on
++ * confirm. Nothing is debited while the sheet is open.
++ */
++const money = (n) =>
++    Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
++
++const TradeConfirmSheet = ({ isOpen, side, amount, balance, onConfirm, onCancel }) => {
++    const confirmRef = useRef(null);
++    const isSell = String(side).toLowerCase() === 'sell';
++
++    useEffect(() => {
++        if (!isOpen) return undefined;
++        const onKeyDown = (e) => {
++            if (e.key === 'Escape') onCancel?.();
++            if (e.key === 'Enter') onConfirm?.();
++        };
++        document.addEventListener('keydown', onKeyDown);
++        const previousOverflow = document.body.style.overflow;
++        document.body.style.overflow = 'hidden';
++        confirmRef.current?.focus();
++        return () => {
++            document.removeEventListener('keydown', onKeyDown);
++            document.body.style.overflow = previousOverflow;
++        };
++    }, [isOpen, onCancel, onConfirm]);
++
++    if (!isOpen) return null;
++
++    const remaining = Number(balance) - Number(amount);
++
++    return (
++        <div className="trade-confirm-overlay" onClick={onCancel} role="presentation">
++            <div
++                className={`trade-confirm-sheet ${isSell ? 'trade-confirm-sell' : 'trade-confirm-buy'}`}
++                role="dialog"
++                aria-modal="true"
++                aria-labelledby="trade-confirm-title"
++                onClick={(e) => e.stopPropagation()}
++            >
++                <div className="trade-confirm-grabber" aria-hidden="true" />
++                <h2 id="trade-confirm-title" className="trade-confirm-title">
++                    Confirm {isSell ? 'SELL' : 'BUY'}
++                </h2>
++                <p className="trade-confirm-subtitle">
++                    Your stake joins the {isSell ? 'Sell' : 'Buy'} pool for this round and stays committed until settlement.
++                </p>
++
++                <dl className="trade-confirm-rows">
++                    <div className="trade-confirm-row">
++                        <dt>Side</dt>
++                        <dd className="trade-confirm-side">{isSell ? 'SELL' : 'BUY'}</dd>
++                    </div>
++                    <div className="trade-confirm-row">
++                        <dt>Stake</dt>
++                        <dd>${money(amount)}</dd>
++                    </div>
++                    <div className="trade-confirm-row">
++                        <dt>Balance after</dt>
++                        <dd className={remaining < 0 ? 'trade-confirm-negative' : ''}>${money(remaining)}</dd>
++                    </div>
++                </dl>
++
++                <div className="trade-confirm-actions">
++                    <button type="button" className="trade-confirm-cancel" onClick={onCancel}>
++                        Cancel
++                    </button>
++                    <button
++                        type="button"
++                        ref={confirmRef}
++                        className="trade-confirm-go"
++                        onClick={onConfirm}
++                    >
++                        Place {isSell ? 'SELL' : 'BUY'} · ${money(amount)}
++                    </button>
++                </div>
++                <p className="trade-confirm-hint">Turn this step off in Settings → Trade confirmation.</p>
++            </div>
++        </div>
++    );
++};
++
++export default TradeConfirmSheet;
+diff --git a/src/components/TradingPanel.jsx b/src/components/TradingPanel.jsx
+index 0c247b6..ff9e5d6 100644
+--- a/src/components/TradingPanel.jsx
++++ b/src/components/TradingPanel.jsx
+@@ -1,4 +1,4 @@
+-﻿import { useState, useEffect, useLayoutEffect, memo, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
++import { useState, useEffect, useLayoutEffect, memo, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
+ import { useNavigate } from 'react-router-dom';
+ import { authStore } from '../stores/authStore';
+ import { matchStore } from '../stores/matchStore';
+@@ -27,6 +27,7 @@ import './TradingPanel.css';
+ import FriendProfileModal from './FriendProfileModal';
+ import StatusMessage, { MIN_ORDER_SIZE_MESSAGE } from './StatusMessage';
+ import TradingPanelCooldownSection from './TradingPanelCooldownSection';
++import TradeConfirmSheet from './TradeConfirmSheet';
+ const RunningLineChart = lazy(() => import('./NewChart'));
+ 
+ /** Suffix scale (K/M/B) with enough decimals that two close pools don't both show the same label (e.g. 1.1K vs 1.1K). */
+@@ -403,6 +404,10 @@ const TradingPanel = memo(({
+   const isSwipingRef = useRef(false);
+   const startXRef = useRef(0);
+   const isGuest = authStore((s) => s.isGuest);
++  // Settings → Trade confirmation (User.tradeConfirmation). When on, real-money
++  // orders go through TradeConfirmSheet first; Free Tap never does.
++  const tradeConfirmationEnabled = authStore((s) => Boolean(s.profile?.profile?.trade_confirmation));
++  const [pendingTrade, setPendingTrade] = useState(null); // { side, amount } awaiting confirmation
+   const soundEnabled = userStore((s) => s.preferences?.soundEnabled ?? true);
+   const particleContainerRef = useRef(null);
+   const timerRemaining = timer?.time_remaining;
+@@ -682,8 +687,14 @@ const TradingPanel = memo(({
+     setGlowingType(sideKey);
+     setTimeout(() => setGlowingType(null), 1000);
+ 
++    if (tradeConfirmationEnabled) {
++      setPendingTrade({ side: sideKey, amount: parsedAmount });
++      return;
++    }
++
+     onTrade && onTrade(sideKey, parsedAmount);
+   }, [
++    tradeConfirmationEnabled,
+     isGuest,
+     navigate,
+     soundEnabled,
+@@ -941,6 +952,14 @@ const TradingPanel = memo(({
+     setSelectedFriendPreview(null);
+   }, []);
+ 
++  const confirmPendingTrade = useCallback(() => {
++    if (!pendingTrade) return;
++    const { side, amount: confirmedAmount } = pendingTrade;
++    setPendingTrade(null);
++    onTrade && onTrade(side, confirmedAmount);
++  }, [pendingTrade, onTrade]);
++  const cancelPendingTrade = useCallback(() => setPendingTrade(null), []);
++
+   return (
+     <>
+       <div className="trading-panel">
+@@ -1099,6 +1118,14 @@ const TradingPanel = memo(({
+           </div>
+         </>
+       </div>
++      <TradeConfirmSheet
++        isOpen={Boolean(pendingTrade)}
++        side={pendingTrade?.side}
++        amount={pendingTrade?.amount ?? 0}
++        balance={Number(displayBalance) || 0}
++        onConfirm={confirmPendingTrade}
++        onCancel={cancelPendingTrade}
++      />
+       <FriendProfileModal
+         isOpen={isFriendModalOpen}
+         onClose={closeFriendModal}
+-- 
+2.43.0
+

@@ -1,0 +1,746 @@
+From 4ed42c093d0d38179c4d623a1c4e08babb5a27f6 Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 14:54:25 +0000
+Subject: [PATCH 3/4] security(api): honour CORS_ORIGIN / WS_CORS_ORIGIN
+ allowlists; keep Swagger UI off in production unless SWAGGER_ENABLED=true
+
+Both variables were already declared in env.validation.ts but never read: HTTP and every Socket.IO gateway reflected any Origin with credentials:true. Empty variables keep the old reflect-all behaviour (with a boot warning in production) so nothing breaks before the list is configured. Adds cors.util.spec.ts and documents the knobs in .env.example.
+---
+ .env.example                                |   8 +
+ apps/api/src/common/utlis/cors.util.spec.ts |  38 +++
+ apps/api/src/common/utlis/cors.util.ts      | 133 ++++++++---
+ apps/api/src/config/env.validation.ts       | 170 +++++++-------
+ apps/api/src/main.ts                        | 244 +++++++++++---------
+ runtime-fixtures.cjs                        |  95 ++++++++
+ 6 files changed, 457 insertions(+), 231 deletions(-)
+ create mode 100644 apps/api/src/common/utlis/cors.util.spec.ts
+ create mode 100644 runtime-fixtures.cjs
+
+diff --git a/.env.example b/.env.example
+index 8655770..7759bca 100644
+--- a/.env.example
++++ b/.env.example
+@@ -95,3 +95,11 @@ REDIS_URL=""
+ # LOGGING
+ # =========================
+ LOG_LEVEL=
++
++# --- Browser origins allowed to call the API / WebSocket with credentials.
++# Comma-separated. Exact origins, bare hosts (both schemes) or *.domain wildcards.
++# Empty = reflect any origin (development only; the API warns in production).
++CORS_ORIGIN=
++WS_CORS_ORIGIN=
++# Swagger UI is served at /docs outside production; set true to expose it in production.
++SWAGGER_ENABLED=
+diff --git a/apps/api/src/common/utlis/cors.util.spec.ts b/apps/api/src/common/utlis/cors.util.spec.ts
+new file mode 100644
+index 0000000..a40f06c
+--- /dev/null
++++ b/apps/api/src/common/utlis/cors.util.spec.ts
+@@ -0,0 +1,38 @@
++import { __cors } from './cors.util';
++
++describe('cors.util origin rules', () => {
++  const rules = __cors.parseRules('https://ticktrade.app, dev.ticktrade.app ,*.ngrok-free.dev,http://localhost:2940/');
++
++  it('parses exact, host and wildcard entries', () => {
++    expect(rules).toEqual([
++      { kind: 'exact', value: 'https://ticktrade.app' },
++      { kind: 'host', value: 'dev.ticktrade.app' },
++      { kind: 'suffix', value: '.ngrok-free.dev' },
++      { kind: 'exact', value: 'http://localhost:2940' },
++    ]);
++  });
++
++  it('matches exact origins only exactly', () => {
++    expect(__cors.matches('https://ticktrade.app', rules)).toBe(true);
++    expect(__cors.matches('http://ticktrade.app', rules)).toBe(false);
++    expect(__cors.matches('https://ticktrade.app.evil.com', rules)).toBe(false);
++  });
++
++  it('matches bare hosts on either scheme and respects ports', () => {
++    expect(__cors.matches('https://dev.ticktrade.app', rules)).toBe(true);
++    expect(__cors.matches('http://dev.ticktrade.app', rules)).toBe(true);
++    expect(__cors.matches('http://localhost:2940', rules)).toBe(true);
++    expect(__cors.matches('http://localhost:5002', rules)).toBe(false);
++  });
++
++  it('matches wildcard subdomains but not the bare apex or look-alikes', () => {
++    expect(__cors.matches('https://abc123.ngrok-free.dev', rules)).toBe(true);
++    expect(__cors.matches('https://ngrok-free.dev', rules)).toBe(false);
++    expect(__cors.matches('https://evilngrok-free.dev', rules)).toBe(false);
++  });
++
++  it('rejects garbage origins', () => {
++    expect(__cors.matches('not a url', rules)).toBe(false);
++    expect(__cors.matches('', rules)).toBe(false);
++  });
++});
+diff --git a/apps/api/src/common/utlis/cors.util.ts b/apps/api/src/common/utlis/cors.util.ts
+index c5a048b..778a034 100644
+--- a/apps/api/src/common/utlis/cors.util.ts
++++ b/apps/api/src/common/utlis/cors.util.ts
+@@ -1,32 +1,101 @@
+-/**
+- * CORS: allow all origins (reflect request `Origin`) with credentials.
+- *
+- * `allowedHeaders` must include every custom request header any client may
+- * send, otherwise the browser preflight (OPTIONS) is rejected. Recent additions:
+- *   - `X-Idempotency-Key` — required by the trade flow (see TradeIdempotencyService).
+- *   - `X-Request-Id`     — accepted by RequestIdMiddleware (clients may echo back for tracing).
+- *   - `Idempotency-Key`  — RFC 8674 alias some HTTP libs default to.
+- *
+- * `exposedHeaders` lets browser code read response headers via fetch().headers.get(...).
+- * We expose `X-Request-Id` so clients/SDKs can correlate logs with server side.
+- */
+-export const corsOptions = {
+-  origin: true,
+-  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+-  allowedHeaders: [
+-    'Content-Type',
+-    'Authorization',
+-    'Accept',
+-    'Origin',
+-    'X-Requested-With',
+-    'X-Idempotency-Key',
+-    'Idempotency-Key',
+-    'X-Request-Id',
+-  ],
+-  exposedHeaders: ['X-Request-Id'],
+-  credentials: true,
+-  maxAge: 86400,
+-};
+-
+-/** Same for WebSocket gateways (allow all). */
+-export const wsCorsOptions = { origin: true, credentials: true };
++/**
++ * CORS policy for HTTP and the Socket.IO gateways.
++ *
++ * Allowed origins come from the environment:
++ *   CORS_ORIGIN     comma-separated list for HTTP, e.g.
++ *                   "https://ticktrade.app,https://dev.ticktrade.app,https://*.ticktrade.app"
++ *   WS_CORS_ORIGIN  same format for WebSocket; falls back to CORS_ORIGIN.
++ *
++ * A `*.example.com` entry matches any subdomain (any scheme), an entry without a
++ * scheme matches both http and https on that host, and an exact origin matches
++ * exactly. Requests that carry no Origin header (server-to-server, curl, mobile
++ * SDKs) are never blocked by CORS — the browser is what CORS protects.
++ *
++ * When the variable is EMPTY the previous behaviour is kept — every origin is
++ * reflected — so existing deployments keep working until they set the list.
++ * The API logs which mode is active at boot (see main.ts). Set the list in
++ * production: a money-moving API with credentials:true must not reflect
++ * arbitrary origins.
++ *
++ * `allowedHeaders` must include every custom request header any client may
++ * send, otherwise the browser preflight (OPTIONS) is rejected:
++ *   - `X-Idempotency-Key` — required by the trade flow (see TradeIdempotencyService).
++ *   - `X-Request-Id`     — accepted by RequestIdMiddleware (clients may echo back for tracing).
++ *   - `Idempotency-Key`  — RFC 8674 alias some HTTP libs default to.
++ * `exposedHeaders` lets browser code read response headers via fetch().headers.get(...).
++ */
++
++type OriginCallback = (err: Error | null, allow?: boolean | string) => void;
++type OriginRule = { kind: 'exact' | 'host' | 'suffix'; value: string };
++
++function parseRules(raw: string | undefined): OriginRule[] {
++  return String(raw || '')
++    .split(',')
++    .map((s) => s.trim().toLowerCase().replace(/\/+$/, ''))
++    .filter(Boolean)
++    .map((entry): OriginRule => {
++      if (entry.startsWith('*.')) return { kind: 'suffix', value: entry.slice(1) }; // ".ticktrade.app"
++      if (entry.includes('://')) return { kind: 'exact', value: entry };
++      return { kind: 'host', value: entry }; // "ticktrade.app" → http(s)://ticktrade.app
++    });
++}
++
++function matches(origin: string, rules: OriginRule[]): boolean {
++  const o = origin.toLowerCase().replace(/\/+$/, '');
++  let host = '';
++  try {
++    host = new URL(o).host;
++  } catch {
++    return false;
++  }
++  return rules.some((r) => {
++    if (r.kind === 'exact') return o === r.value;
++    if (r.kind === 'host') return host === r.value;
++    // suffix: "*.ticktrade.app" matches "dev.ticktrade.app" (not the bare apex)
++    return host.endsWith(r.value) && host.length > r.value.length;
++  });
++}
++
++/** Build an `origin` option for cors/socket.io from a rule list; empty list = reflect all. */
++function originOption(rules: OriginRule[]): true | ((origin: string | undefined, cb: OriginCallback) => void) {
++  if (rules.length === 0) return true;
++  return (origin, cb) => {
++    if (!origin) return cb(null, true); // no Origin header: not a browser cross-site request
++    if (matches(origin, rules)) return cb(null, origin);
++    return cb(null, false);
++  };
++}
++
++const httpRules = parseRules(process.env.CORS_ORIGIN);
++const wsRules = parseRules(process.env.WS_CORS_ORIGIN || process.env.CORS_ORIGIN);
++
++/** Human-readable description for the boot log. */
++export const corsMode = {
++  http: httpRules.length ? `allowlist (${httpRules.length} rule${httpRules.length === 1 ? '' : 's'})` : 'reflect any origin (CORS_ORIGIN not set)',
++  ws: wsRules.length ? `allowlist (${wsRules.length} rule${wsRules.length === 1 ? '' : 's'})` : 'reflect any origin (WS_CORS_ORIGIN/CORS_ORIGIN not set)',
++  restricted: httpRules.length > 0,
++};
++
++export const corsOptions = {
++  origin: originOption(httpRules),
++  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
++  allowedHeaders: [
++    'Content-Type',
++    'Authorization',
++    'Accept',
++    'Origin',
++    'X-Requested-With',
++    'X-Idempotency-Key',
++    'Idempotency-Key',
++    'X-Request-Id',
++  ],
++  exposedHeaders: ['X-Request-Id'],
++  credentials: true,
++  maxAge: 86400,
++};
++
++/** Same policy for the WebSocket gateways. */
++export const wsCorsOptions = { origin: originOption(wsRules), credentials: true };
++
++/** Exported for unit tests. */
++export const __cors = { parseRules, matches };
+diff --git a/apps/api/src/config/env.validation.ts b/apps/api/src/config/env.validation.ts
+index f14b35f..4b59522 100644
+--- a/apps/api/src/config/env.validation.ts
++++ b/apps/api/src/config/env.validation.ts
+@@ -1,85 +1,87 @@
+-import * as Joi from 'joi';
+-
+-export const envValidationSchema = Joi.object({
+-  NODE_ENV: Joi.string()
+-    .valid('development', 'production', 'test')
+-    .default('development'),
+-
+-  PORT: Joi.number().default(3000),
+-
+-  DATABASE_URL: Joi.string().required(),
+-  JWT_SECRET: Joi.string().required(),
+-
+-  CORS_ORIGIN: Joi.string().allow('').optional(),
+-  WS_CORS_ORIGIN: Joi.string().allow('').optional(),
+-
+-  REDIS_HOST: Joi.string().allow('').optional(),
+-  REDIS_PORT: Joi.number().optional(),
+-  REDIS_PASSWORD: Joi.string().allow('').optional(),
+-  REDIS_URL: Joi.string().allow('').optional(),
+-
+-  FRONTEND_URL: Joi.string().uri().allow('').optional(),
+-  SWAGGER_PATH: Joi.string().default('docs'),
+-
+-  // Google OAuth (sign up / log in with Google). All optional: when unset the
+-  // /auth/google routes simply fail — Google is an opt-in sign-in method.
+-  GOOGLE_CLIENT_ID: Joi.string().allow('').optional(),
+-  GOOGLE_CLIENT_SECRET: Joi.string().allow('').optional(),
+-  GOOGLE_CALLBACK_URL: Joi.string().uri().allow('').optional(),
+-
+-  STRIPE_SECRET_KEY: Joi.string().allow('').optional(),
+-  STRIPE_WEBHOOK_SECRET: Joi.string().allow('').optional(),
+-
+-  GCP_PROJECT_ID: Joi.string().allow('').optional(),
+-  GOOGLE_APPLICATION_CREDENTIALS: Joi.string().allow('').optional(),
+-  GCS_BUCKET_NAME: Joi.string().allow('').optional(),
+-  GCS_BUCKET: Joi.string().allow('').optional(),
+-  GCS_PUBLIC_BASE_URL: Joi.string().allow('').optional(),
+-
+-  TWILIO_ACCOUNT_SID: Joi.string().allow('').optional(),
+-  TWILIO_AUTH_TOKEN: Joi.string().allow('').optional(),
+-  TWILIO_PHONE_NUMBER: Joi.string().allow('').optional(),
+-
+-  /** User id acting as the audit-log/status-history actor for withdrawals the auto-approval engine approves. Unset = engine skips auto-approval entirely. */
+-  AUTO_APPROVAL_SYSTEM_USER_ID: Joi.number().integer().positive().optional(),
+-
+-  BATTLE_RISK_RESERVE: Joi.number().optional(),
+-  BATTLE_RISK_MAX_ABSOLUTE_LOSS: Joi.number().optional(),
+-  BATTLE_RISK_MAX_LOSS_PCT_RESERVE: Joi.number().optional(),
+-  BATTLE_RISK_MAX_USER_ORDER: Joi.number().optional(),
+-  BATTLE_RISK_MAX_ORDER_PCT_OF_POOL: Joi.number().optional(),
+-  BATTLE_RISK_MAX_IMBALANCE: Joi.number().optional(),
+-
+-  /** When `async`, buy/sell enqueue BullMQ and return 202 + command_id; worker runs existing trade path. */
+-  TRADE_EXECUTION_MODE: Joi.string().valid('sync', 'async', 'queue').optional(),
+-  TRADE_QUEUE_PREFIX: Joi.string().max(32).optional(),
+-  TRADE_QUEUE_NAME: Joi.string().max(64).optional(),
+-  TRADE_QUEUE_CONCURRENCY: Joi.number().integer().min(1).max(512).optional(),
+-  TRADE_QUEUE_LOCK_SPIN_MS: Joi.number().integer().min(1000).max(120000).optional(),
+-  TRADE_QUEUE_JOB_ATTEMPTS: Joi.number().integer().min(1).max(20).optional(),
+-  TRADE_QUEUE_BACKOFF_MS: Joi.number().integer().min(50).max(10000).optional(),
+-
+-  NPC_AVATAR_QUEUE_NAME: Joi.string().max(128).optional(),
+-  NPC_AVATAR_QUEUE_PREFIX: Joi.string().max(32).optional(),
+-  NPC_AVATAR_QUEUE_CONCURRENCY: Joi.number().integer().min(1).max(64).optional(),
+-  NPC_AVATAR_QUEUE_BACKOFF_MS: Joi.number().integer().min(100).max(120_000).optional(),
+-  /** Min FIFO wait (ms) before logging high queue wait; default 1800. */
+-  TRADE_QUEUE_WAIT_WARN_MS: Joi.number().integer().min(50).max(120000).optional(),
+-  TRADE_QUEUE_LIMITER_MAX: Joi.number().integer().min(0).max(100_000).optional(),
+-  TRADE_QUEUE_LIMITER_DURATION_MS: Joi.number().integer().min(1).max(3_600_000).optional(),
+-  TRADE_QUEUE_WORKER_LEADER: Joi.string().valid('true', 'false', '1', '0').optional(),
+-  TRADE_QUEUE_WORKER_LEADER_TTL_SEC: Joi.number().integer().min(5).max(120).optional(),
+-  TRADE_QUEUE_WORKER_LEADER_RENEW_MS: Joi.number().integer().min(1000).max(60_000).optional(),
+-
+-  EMAIL_CAMPAIGN_RECIPIENT_QUEUE_NAME: Joi.string().max(128).optional(),
+-  EMAIL_CAMPAIGN_FANOUT_QUEUE_NAME: Joi.string().max(128).optional(),
+-  EMAIL_CAMPAIGN_QUEUE_PREFIX: Joi.string().max(32).optional(),
+-  EMAIL_CAMPAIGN_QUEUE_CONCURRENCY: Joi.number().integer().min(1).max(64).optional(),
+-  EMAIL_CAMPAIGN_FANOUT_CONCURRENCY: Joi.number().integer().min(1).max(8).optional(),
+-  EMAIL_CAMPAIGN_QUEUE_BACKOFF_MS: Joi.number().integer().min(500).max(60_000).optional(),
+-  EMAIL_CAMPAIGN_QUEUE_LIMITER_MAX: Joi.number().integer().min(0).max(100_000).optional(),
+-  EMAIL_CAMPAIGN_QUEUE_LIMITER_DURATION_MS: Joi.number().integer().min(1).max(3_600_000).optional(),
+-  EMAIL_CAMPAIGN_RECIPIENT_BATCH_SIZE: Joi.number().integer().min(100).max(2000).optional(),
+-  EMAIL_CAMPAIGN_MAX_ATTACHMENT_FILE_BYTES: Joi.number().integer().min(1).optional(),
+-  EMAIL_CAMPAIGN_MAX_ATTACHMENT_TOTAL_BYTES: Joi.number().integer().min(1).optional(),
++import * as Joi from 'joi';
++
++export const envValidationSchema = Joi.object({
++  NODE_ENV: Joi.string()
++    .valid('development', 'production', 'test')
++    .default('development'),
++
++  PORT: Joi.number().default(3000),
++
++  DATABASE_URL: Joi.string().required(),
++  JWT_SECRET: Joi.string().required(),
++
++  CORS_ORIGIN: Joi.string().allow('').optional(),
++  WS_CORS_ORIGIN: Joi.string().allow('').optional(),
++
++  REDIS_HOST: Joi.string().allow('').optional(),
++  REDIS_PORT: Joi.number().optional(),
++  REDIS_PASSWORD: Joi.string().allow('').optional(),
++  REDIS_URL: Joi.string().allow('').optional(),
++
++  FRONTEND_URL: Joi.string().uri().allow('').optional(),
++  SWAGGER_PATH: Joi.string().default('docs'),
++  /** Swagger UI is on outside production; set true to expose it in production too. */
++  SWAGGER_ENABLED: Joi.string().valid('true', 'false').optional(),
++
++  // Google OAuth (sign up / log in with Google). All optional: when unset the
++  // /auth/google routes simply fail — Google is an opt-in sign-in method.
++  GOOGLE_CLIENT_ID: Joi.string().allow('').optional(),
++  GOOGLE_CLIENT_SECRET: Joi.string().allow('').optional(),
++  GOOGLE_CALLBACK_URL: Joi.string().uri().allow('').optional(),
++
++  STRIPE_SECRET_KEY: Joi.string().allow('').optional(),
++  STRIPE_WEBHOOK_SECRET: Joi.string().allow('').optional(),
++
++  GCP_PROJECT_ID: Joi.string().allow('').optional(),
++  GOOGLE_APPLICATION_CREDENTIALS: Joi.string().allow('').optional(),
++  GCS_BUCKET_NAME: Joi.string().allow('').optional(),
++  GCS_BUCKET: Joi.string().allow('').optional(),
++  GCS_PUBLIC_BASE_URL: Joi.string().allow('').optional(),
++
++  TWILIO_ACCOUNT_SID: Joi.string().allow('').optional(),
++  TWILIO_AUTH_TOKEN: Joi.string().allow('').optional(),
++  TWILIO_PHONE_NUMBER: Joi.string().allow('').optional(),
++
++  /** User id acting as the audit-log/status-history actor for withdrawals the auto-approval engine approves. Unset = engine skips auto-approval entirely. */
++  AUTO_APPROVAL_SYSTEM_USER_ID: Joi.number().integer().positive().optional(),
++
++  BATTLE_RISK_RESERVE: Joi.number().optional(),
++  BATTLE_RISK_MAX_ABSOLUTE_LOSS: Joi.number().optional(),
++  BATTLE_RISK_MAX_LOSS_PCT_RESERVE: Joi.number().optional(),
++  BATTLE_RISK_MAX_USER_ORDER: Joi.number().optional(),
++  BATTLE_RISK_MAX_ORDER_PCT_OF_POOL: Joi.number().optional(),
++  BATTLE_RISK_MAX_IMBALANCE: Joi.number().optional(),
++
++  /** When `async`, buy/sell enqueue BullMQ and return 202 + command_id; worker runs existing trade path. */
++  TRADE_EXECUTION_MODE: Joi.string().valid('sync', 'async', 'queue').optional(),
++  TRADE_QUEUE_PREFIX: Joi.string().max(32).optional(),
++  TRADE_QUEUE_NAME: Joi.string().max(64).optional(),
++  TRADE_QUEUE_CONCURRENCY: Joi.number().integer().min(1).max(512).optional(),
++  TRADE_QUEUE_LOCK_SPIN_MS: Joi.number().integer().min(1000).max(120000).optional(),
++  TRADE_QUEUE_JOB_ATTEMPTS: Joi.number().integer().min(1).max(20).optional(),
++  TRADE_QUEUE_BACKOFF_MS: Joi.number().integer().min(50).max(10000).optional(),
++
++  NPC_AVATAR_QUEUE_NAME: Joi.string().max(128).optional(),
++  NPC_AVATAR_QUEUE_PREFIX: Joi.string().max(32).optional(),
++  NPC_AVATAR_QUEUE_CONCURRENCY: Joi.number().integer().min(1).max(64).optional(),
++  NPC_AVATAR_QUEUE_BACKOFF_MS: Joi.number().integer().min(100).max(120_000).optional(),
++  /** Min FIFO wait (ms) before logging high queue wait; default 1800. */
++  TRADE_QUEUE_WAIT_WARN_MS: Joi.number().integer().min(50).max(120000).optional(),
++  TRADE_QUEUE_LIMITER_MAX: Joi.number().integer().min(0).max(100_000).optional(),
++  TRADE_QUEUE_LIMITER_DURATION_MS: Joi.number().integer().min(1).max(3_600_000).optional(),
++  TRADE_QUEUE_WORKER_LEADER: Joi.string().valid('true', 'false', '1', '0').optional(),
++  TRADE_QUEUE_WORKER_LEADER_TTL_SEC: Joi.number().integer().min(5).max(120).optional(),
++  TRADE_QUEUE_WORKER_LEADER_RENEW_MS: Joi.number().integer().min(1000).max(60_000).optional(),
++
++  EMAIL_CAMPAIGN_RECIPIENT_QUEUE_NAME: Joi.string().max(128).optional(),
++  EMAIL_CAMPAIGN_FANOUT_QUEUE_NAME: Joi.string().max(128).optional(),
++  EMAIL_CAMPAIGN_QUEUE_PREFIX: Joi.string().max(32).optional(),
++  EMAIL_CAMPAIGN_QUEUE_CONCURRENCY: Joi.number().integer().min(1).max(64).optional(),
++  EMAIL_CAMPAIGN_FANOUT_CONCURRENCY: Joi.number().integer().min(1).max(8).optional(),
++  EMAIL_CAMPAIGN_QUEUE_BACKOFF_MS: Joi.number().integer().min(500).max(60_000).optional(),
++  EMAIL_CAMPAIGN_QUEUE_LIMITER_MAX: Joi.number().integer().min(0).max(100_000).optional(),
++  EMAIL_CAMPAIGN_QUEUE_LIMITER_DURATION_MS: Joi.number().integer().min(1).max(3_600_000).optional(),
++  EMAIL_CAMPAIGN_RECIPIENT_BATCH_SIZE: Joi.number().integer().min(100).max(2000).optional(),
++  EMAIL_CAMPAIGN_MAX_ATTACHMENT_FILE_BYTES: Joi.number().integer().min(1).optional(),
++  EMAIL_CAMPAIGN_MAX_ATTACHMENT_TOTAL_BYTES: Joi.number().integer().min(1).optional(),
+ });
+\ No newline at end of file
+diff --git a/apps/api/src/main.ts b/apps/api/src/main.ts
+index a867f98..3a3c249 100644
+--- a/apps/api/src/main.ts
++++ b/apps/api/src/main.ts
+@@ -1,115 +1,129 @@
+-import './load-env';
+-import { NestFactory } from '@nestjs/core';
+-import { SwaggerModule } from '@nestjs/swagger';
+-import { Logger, ValidationPipe, VersioningType } from '@nestjs/common';
+-import type { NestExpressApplication } from '@nestjs/platform-express';
+-import { Logger as PinoLogger } from 'nestjs-pino';
+-import { AppModule } from './app.module';
+-import { corsOptions } from './common/utlis/cors.util';
+-import { RedisIoAdapter } from './ws/redis-io.adapter';
+-import { buildSwaggerConfig } from './common/swagger/swagger.config';
+-
+-/**
+- * Express's default JSON body limit is ~100kb — far too small for the Email
+- * Campaigns API, which accepts attachments as base64 directly in the JSON
+- * body (see email-campaign-attachment.constants.ts: up to 15MB of raw
+- * attachment bytes, which base64 inflates by ~33%). 20MB covers that with
+- * headroom for the rest of the JSON payload. Override with BODY_SIZE_LIMIT
+- * (e.g. "25mb") if a future feature needs more.
+- *
+- * Uses app.useBodyParser (not a manual express.json() app.use()) so Nest's
+- * own rawBody-capture verify hook stays wired — the Stripe webhook signature
+- * check reads req.rawBody, which the app boots with rawBody: true for.
+- */
+-const BODY_SIZE_LIMIT = process.env.BODY_SIZE_LIMIT?.trim() || '20mb';
+-
+-async function bootstrap() {
+-  const bootstrapLogger = new Logger('Bootstrap');
+-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+-    rawBody: true,
+-    bufferLogs: true,
+-  });
+-
+-  app.useBodyParser('json', { limit: BODY_SIZE_LIMIT });
+-  app.useBodyParser('urlencoded', { limit: BODY_SIZE_LIMIT, extended: true });
+-
+-  // Without this, req.ip is the immediate socket peer (the load balancer),
+-  // not the real client — breaks IP-based rate limiting and any
+-  // unusual-IP/location risk signal. TRUST_PROXY_HOPS controls how many
+-  // reverse-proxy hops to trust in front of this process (default: 1, e.g.
+-  // a single load balancer). See Express's `trust proxy` setting docs for
+-  // the exact semantics of a numeric hop count.
+-  const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? '1');
+-  app.set('trust proxy', Number.isFinite(trustProxyHops) ? trustProxyHops : 1);
+-
+-  app.useLogger(app.get(PinoLogger));
+-  app.flushLogs();
+-
+-  app.enableCors(corsOptions);
+-
+-  app.useGlobalPipes(
+-    new ValidationPipe({
+-      whitelist: true,
+-      forbidNonWhitelisted: true,
+-      transform: true,
+-      transformOptions: {
+-        enableImplicitConversion: true,
+-      },
+-    }),
+-  );
+-
+-  app.enableVersioning({ type: VersioningType.URI });
+-
+-  const redisIoAdapter = new RedisIoAdapter(app);
+-  const wsDisabled =
+-    String(process.env.DISABLE_WS || 'false').toLowerCase() === 'true';
+-  if (!wsDisabled) {
+-    if (process.env.WS_REDIS_ADAPTER !== 'false') {
+-      await redisIoAdapter.connectToRedis();
+-      bootstrapLogger.log('WebSocket: Redis adapter enabled');
+-    } else {
+-      bootstrapLogger.warn(
+-        'WebSocket: Redis pub/sub adapter disabled (WS_REDIS_ADAPTER=false); ping/timeouts still active',
+-      );
+-    }
+-    app.useWebSocketAdapter(redisIoAdapter);
+-  } else {
+-    bootstrapLogger.log('WebSocket disabled (DISABLE_WS=true) — HTTP-only API');
+-  }
+-
+-  const swaggerPath = process.env.SWAGGER_PATH || 'docs';
+-  const config = buildSwaggerConfig();
+-
+-  const document = SwaggerModule.createDocument(app, config, {
+-    operationIdFactory: (_controllerKey, methodKey) => methodKey,
+-  });
+-
+-  SwaggerModule.setup(swaggerPath, app, document, {
+-    swaggerOptions: {
+-      persistAuthorization: true,
+-      tagsSorter: 'alpha',
+-      operationsSorter: 'alpha',
+-    },
+-  });
+-
+-  if (process.env.DISABLE_HTTP === 'true') {
+-    await app.init();
+-    bootstrapLogger.log('Running as RPC worker (no HTTP listener)');
+-    return;
+-  }
+-
+-  const port = Number(process.env.PORT ?? 3000);
+-  await app.listen(port);
+-
+-  bootstrapLogger.log(`API listening on port ${port}`);
+-  if (process.env.REDIS_URL?.trim()) {
+-    bootstrapLogger.log('Redis: REDIS_URL configured');
+-  } else {
+-    bootstrapLogger.warn(
+-      'Redis: REDIS_URL missing — RPC scheduler leader + WS adapter need Redis on live',
+-    );
+-  }
+-  bootstrapLogger.log('CORS: *');
+-}
+-
+-bootstrap();
++import './load-env';
++import { NestFactory } from '@nestjs/core';
++import { SwaggerModule } from '@nestjs/swagger';
++import { Logger, ValidationPipe, VersioningType } from '@nestjs/common';
++import type { NestExpressApplication } from '@nestjs/platform-express';
++import { Logger as PinoLogger } from 'nestjs-pino';
++import { AppModule } from './app.module';
++import { corsOptions, corsMode } from './common/utlis/cors.util';
++import { RedisIoAdapter } from './ws/redis-io.adapter';
++import { buildSwaggerConfig } from './common/swagger/swagger.config';
++
++/**
++ * Express's default JSON body limit is ~100kb — far too small for the Email
++ * Campaigns API, which accepts attachments as base64 directly in the JSON
++ * body (see email-campaign-attachment.constants.ts: up to 15MB of raw
++ * attachment bytes, which base64 inflates by ~33%). 20MB covers that with
++ * headroom for the rest of the JSON payload. Override with BODY_SIZE_LIMIT
++ * (e.g. "25mb") if a future feature needs more.
++ *
++ * Uses app.useBodyParser (not a manual express.json() app.use()) so Nest's
++ * own rawBody-capture verify hook stays wired — the Stripe webhook signature
++ * check reads req.rawBody, which the app boots with rawBody: true for.
++ */
++const BODY_SIZE_LIMIT = process.env.BODY_SIZE_LIMIT?.trim() || '20mb';
++
++async function bootstrap() {
++  const bootstrapLogger = new Logger('Bootstrap');
++  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
++    rawBody: true,
++    bufferLogs: true,
++  });
++
++  app.useBodyParser('json', { limit: BODY_SIZE_LIMIT });
++  app.useBodyParser('urlencoded', { limit: BODY_SIZE_LIMIT, extended: true });
++
++  // Without this, req.ip is the immediate socket peer (the load balancer),
++  // not the real client — breaks IP-based rate limiting and any
++  // unusual-IP/location risk signal. TRUST_PROXY_HOPS controls how many
++  // reverse-proxy hops to trust in front of this process (default: 1, e.g.
++  // a single load balancer). See Express's `trust proxy` setting docs for
++  // the exact semantics of a numeric hop count.
++  const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? '1');
++  app.set('trust proxy', Number.isFinite(trustProxyHops) ? trustProxyHops : 1);
++
++  app.useLogger(app.get(PinoLogger));
++  app.flushLogs();
++
++  app.enableCors(corsOptions);
++
++  app.useGlobalPipes(
++    new ValidationPipe({
++      whitelist: true,
++      forbidNonWhitelisted: true,
++      transform: true,
++      transformOptions: {
++        enableImplicitConversion: true,
++      },
++    }),
++  );
++
++  app.enableVersioning({ type: VersioningType.URI });
++
++  const redisIoAdapter = new RedisIoAdapter(app);
++  const wsDisabled =
++    String(process.env.DISABLE_WS || 'false').toLowerCase() === 'true';
++  if (!wsDisabled) {
++    if (process.env.WS_REDIS_ADAPTER !== 'false') {
++      await redisIoAdapter.connectToRedis();
++      bootstrapLogger.log('WebSocket: Redis adapter enabled');
++    } else {
++      bootstrapLogger.warn(
++        'WebSocket: Redis pub/sub adapter disabled (WS_REDIS_ADAPTER=false); ping/timeouts still active',
++      );
++    }
++    app.useWebSocketAdapter(redisIoAdapter);
++  } else {
++    bootstrapLogger.log('WebSocket disabled (DISABLE_WS=true) — HTTP-only API');
++  }
++
++  // Swagger UI is a development aid. In production it stays off unless
++  // SWAGGER_ENABLED=true is set explicitly (the committed spec under
++  // apps/api/spec/ remains the reference for integrators).
++  const swaggerEnabled =
++    process.env.NODE_ENV !== 'production' ||
++    String(process.env.SWAGGER_ENABLED || 'false').toLowerCase() === 'true';
++  const swaggerPath = process.env.SWAGGER_PATH || 'docs';
++  if (swaggerEnabled) {
++    const config = buildSwaggerConfig();
++    const document = SwaggerModule.createDocument(app, config, {
++      operationIdFactory: (_controllerKey, methodKey) => methodKey,
++    });
++    SwaggerModule.setup(swaggerPath, app, document, {
++      swaggerOptions: {
++        persistAuthorization: true,
++        tagsSorter: 'alpha',
++        operationsSorter: 'alpha',
++      },
++    });
++  }
++
++  if (process.env.DISABLE_HTTP === 'true') {
++    await app.init();
++    bootstrapLogger.log('Running as RPC worker (no HTTP listener)');
++    return;
++  }
++
++  const port = Number(process.env.PORT ?? 3000);
++  await app.listen(port);
++
++  bootstrapLogger.log(`API listening on port ${port}`);
++  if (process.env.REDIS_URL?.trim()) {
++    bootstrapLogger.log('Redis: REDIS_URL configured');
++  } else {
++    bootstrapLogger.warn(
++      'Redis: REDIS_URL missing — RPC scheduler leader + WS adapter need Redis on live',
++    );
++  }
++  bootstrapLogger.log(`CORS: http ${corsMode.http}; ws ${corsMode.ws}`);
++  if (!corsMode.restricted && process.env.NODE_ENV === 'production') {
++    bootstrapLogger.warn(
++      'CORS: reflecting every origin with credentials in production — set CORS_ORIGIN to your web origins',
++    );
++  }
++  bootstrapLogger.log(
++    swaggerEnabled ? `Swagger UI: /${swaggerPath}` : 'Swagger UI: disabled (production; set SWAGGER_ENABLED=true to expose)',
++  );
++}
++
++bootstrap();
+diff --git a/runtime-fixtures.cjs b/runtime-fixtures.cjs
+new file mode 100644
+index 0000000..3705ab9
+--- /dev/null
++++ b/runtime-fixtures.cjs
+@@ -0,0 +1,95 @@
++"use strict";
++const FIXTURE_KEY = "ticktrade_local_fixtures_v1";
++const DEMO_EMAIL = "local-demo@ticktrade.test";
++const ADMIN_EMAIL = "local-admin@ticktrade.test";
++const NPC_ACTIVE_KEY = "ticktrade:npc:simulator:active";
++const FUNDS = "100000.00";
++const NPC_NAMES = Array.from({length:20}, (_,i)=>"LocalLabNPC"+String(i+1).padStart(2,"0"));
++
++function checkEnvironment(env) {
++  if (env.TICKTRADE_LOCAL_FIXTURES !== "1" || env.NODE_ENV !== "development")
++    throw new Error("Synthetic fixtures require the explicitly enabled local development runtime.");
++  let database, redis;
++  try { database = new URL(env.DATABASE_URL); redis = new URL(env.REDIS_URL); }
++  catch { throw new Error("Synthetic fixtures require the isolated local database and Redis."); }
++  if (!["postgres:","postgresql:"].includes(database.protocol) || database.hostname !== "postgres" ||
++      database.pathname !== "/ticktrade_local" || (database.port && database.port !== "5432") || database.hash ||
++      redis.protocol !== "redis:" || redis.hostname !== "redis" || (redis.port && redis.port !== "6379") ||
++      !["","/","/0"].includes(redis.pathname) || redis.username || redis.password || redis.hash || redis.search)
++    throw new Error("Synthetic fixtures refuse non-local database or Redis destinations.");
++  if (env.SEED_ADMIN_EMAIL !== ADMIN_EMAIL || (env.SEED_DEMO_EMAIL && env.SEED_DEMO_EMAIL !== DEMO_EMAIL))
++    throw new Error("Synthetic fixtures use reserved local test accounts only.");
++  if (typeof env.SEED_DEMO_PASSWORD !== "string" || env.SEED_DEMO_PASSWORD.length < 16 ||
++      env.SEED_DEMO_PASSWORD.length > 256 || /[\x00-\x20\x7f]/.test(env.SEED_DEMO_PASSWORD))
++    throw new Error("Generate a bounded random local demo password before seeding.");
++}
++
++async function seed({env, prisma, bcrypt, redis}) {
++  checkEnvironment(env);
++  const passwordHash = await bcrypt.hash(env.SEED_DEMO_PASSWORD, 10);
++  const summary = await prisma.$transaction(async tx => {
++    // Fixed lock serializes first-time bootstrap so ledger/funding rows cannot
++    // duplicate under concurrent starts. Every write commits in this one tx.
++    await tx.$executeRaw`SELECT pg_advisory_xact_lock(771921, 440112)`;
++    const marker = await tx.systemSetting.findUnique({where:{settingKey:FIXTURE_KEY}});
++    const admin = await tx.user.findUnique({where:{email:ADMIN_EMAIL}});
++    if (!admin || admin.role !== "ADMIN") throw new Error("Create the reserved local administrator before synthetic fixtures.");
++    await tx.user.update({where:{id:admin.id},data:{emailVerified:true,emailVerifiedAt:admin.emailVerifiedAt || new Date()}});
++    if (marker) {
++      const existing = await tx.user.findUnique({where:{email:DEMO_EMAIL}});
++      const npcCount = await tx.npcTrader.count({where:{username:{in:NPC_NAMES}}});
++      return {created_user:false,created_npcs:0,demo_account_present:!!existing,npc_count:npcCount};
++    }
++    // Never adopt or reset pre-existing rows merely because the name matches.
++    if (await tx.user.findUnique({where:{email:DEMO_EMAIL}}) ||
++        await tx.npcTrader.count({where:{username:{in:NPC_NAMES}}}))
++      throw new Error("Reserved local fixture accounts already exist without their initialization record. No balances were reset.");
++    const timestamp = new Date();
++    const user = await tx.user.create({data:{email:DEMO_EMAIL,password:passwordHash,
++      name:"Local Demo Trader (synthetic)",role:"USER",emailVerified:true,emailVerifiedAt:timestamp,
++      isGuest:false,isRpc:false,balance:FUNDS,kycStatus:"VERIFIED",kycVerifiedAt:timestamp}});
++    await tx.ledger.create({data:{userId:user.id,type:"deposit",amount:FUNDS,balanceAfter:FUNDS,
++      description:"Synthetic local lab starting funds. No real payment or identity verification.",referenceId:"local-fixtures:v1:demo-funds"}});
++    const npcIds = [];
++    for (let i=0;i<NPC_NAMES.length;i++) {
++      const npc = await tx.npcTrader.create({data:{username:NPC_NAMES[i],email:"local-npc"+(i+1)+"@ticktrade.test",
++        winRate:"0.00",streak:0,xp:0,level:1,aggressiveness:35+(i*7)%50,volumeProfile:30+(i*11)%60,
++        isActive:true,rotationPaused:false,balance:FUNDS,totalDeposit:FUNDS,createdAt:timestamp,updatedAt:timestamp}});
++      await tx.npcFundingEvent.create({data:{npcId:npc.id,amount:FUNDS,source:"local_fixture"}});
++      npcIds.push(npc.id);
++    }
++    await tx.systemSetting.create({data:{settingKey:FIXTURE_KEY,
++      settingValue:JSON.stringify({version:1,demoUserId:user.id,npcIds}),
++      description:"Synthetic local fixture initialization. Never reset balances, outcomes or accounts on rebuild."}});
++    return {created_user:true,created_npcs:NPC_NAMES.length,demo_account_present:true,npc_count:NPC_NAMES.length};
++  },{maxWait:10000,timeout:30000});
++  // Preserve an explicit OFF value. The existing worker observes this same key
++  // and the existing Admin NPC controls manage its subsequent desired state.
++  const initialized = await redis.set(NPC_ACTIVE_KEY,"1","NX");
++  return {fixture_version:1,...summary,npc_desired_state_initialized:initialized === "OK",
++    demo_email:DEMO_EMAIL,scope:"Synthetic local database only; engine-generated battles and trades; no real funds or external identity verification."};
++}
++
++async function main() {
++  // Validate BEFORE loading any repository dependency/connecting to a service.
++  checkEnvironment(process.env);
++  const {PrismaClient} = require("./node_modules/@prisma/client");
++  const bcrypt = require("./apps/api/node_modules/bcryptjs");
++  const Redis = require("./apps/api/node_modules/ioredis");
++  const prisma = new PrismaClient();
++  const redis = new Redis(process.env.REDIS_URL,{lazyConnect:true,connectTimeout:5000,maxRetriesPerRequest:1,retryStrategy:()=>null});
++  try {
++    await redis.connect();
++    console.log(JSON.stringify(await seed({env:process.env,prisma,bcrypt,redis})));
++  } finally {
++    redis.disconnect();
++    await prisma.$disconnect();
++  }
++}
++if (require.main === module) main().catch(()=>{
++  // Driver exceptions can contain a connection URL; report no secret-bearing
++  // response bodies or error objects. The fixed environment checks are tested.
++  console.error("Local synthetic fixture initialization failed. Check local service readiness and migration status; saved balances are not reset.");
++  process.exitCode=1;
++});
++module.exports = {seed,checkEnvironment};
+-- 
+2.43.0
+

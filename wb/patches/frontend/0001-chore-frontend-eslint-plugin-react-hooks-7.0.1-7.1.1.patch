@@ -1,0 +1,81 @@
+From 681f1736b2717c7059f6f47ee2175bb524eb5eb9 Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 14:52:42 +0000
+Subject: [PATCH 1/5] chore(frontend): eslint-plugin-react-hooks 7.0.1 -> 7.1.1
+ so a clean npm ci no longer fails with ERESOLVE against ESLint 10
+
+Ported from the local tool's applied working version (strict install + build passed there).
+---
+ package-lock.json | 14 +++++++-------
+ package.json      |  2 +-
+ 2 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/package-lock.json b/package-lock.json
+index 2c24b0c..643841e 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -31,7 +31,7 @@
+         "autoprefixer": "^10.4.24",
+         "baseline-browser-mapping": "^2.9.19",
+         "eslint": "^10.0.0",
+-        "eslint-plugin-react-hooks": "^7.0.1",
++        "eslint-plugin-react-hooks": "^7.1.1",
+         "eslint-plugin-react-refresh": "^0.5.0",
+         "globals": "^17.3.0",
+         "postcss": "^8.5.6",
+@@ -3073,7 +3073,7 @@
+       "version": "19.2.14",
+       "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
+       "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
+-      "dev": true,
++      "devOptional": true,
+       "license": "MIT",
+       "dependencies": {
+         "csstype": "^3.2.2"
+@@ -3658,7 +3658,7 @@
+       "version": "3.2.3",
+       "resolved": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz",
+       "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
+-      "dev": true,
++      "devOptional": true,
+       "license": "MIT"
+     },
+     "node_modules/data-view-buffer": {
+@@ -4162,9 +4162,9 @@
+       }
+     },
+     "node_modules/eslint-plugin-react-hooks": {
+-      "version": "7.0.1",
+-      "resolved": "https://registry.npmjs.org/eslint-plugin-react-hooks/-/eslint-plugin-react-hooks-7.0.1.tgz",
+-      "integrity": "sha512-O0d0m04evaNzEPoSW+59Mezf8Qt0InfgGIBJnpC0h3NH/WjUAR7BIKUfysC6todmtiZ/A0oUVS8Gce0WhBrHsA==",
++      "version": "7.1.1",
++      "resolved": "https://registry.npmjs.org/eslint-plugin-react-hooks/-/eslint-plugin-react-hooks-7.1.1.tgz",
++      "integrity": "sha512-f2I7Gw6JbvCexzIInuSbZpfdQ44D7iqdWX01FKLvrPgqxoE7oMj8clOfto8U6vYiz4yd5oKu39rRSVOe1zRu0g==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+@@ -4178,7 +4178,7 @@
+         "node": ">=18"
+       },
+       "peerDependencies": {
+-        "eslint": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0-0 || ^9.0.0"
++        "eslint": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0-0 || ^9.0.0 || ^10.0.0"
+       }
+     },
+     "node_modules/eslint-plugin-react-refresh": {
+diff --git a/package.json b/package.json
+index 7843cfe..2735e31 100644
+--- a/package.json
++++ b/package.json
+@@ -33,7 +33,7 @@
+     "autoprefixer": "^10.4.24",
+     "baseline-browser-mapping": "^2.9.19",
+     "eslint": "^10.0.0",
+-    "eslint-plugin-react-hooks": "^7.0.1",
++    "eslint-plugin-react-hooks": "^7.1.1",
+     "eslint-plugin-react-refresh": "^0.5.0",
+     "globals": "^17.3.0",
+     "postcss": "^8.5.6",
+-- 
+2.43.0
+

@@ -1,0 +1,51 @@
+From 2aad43805407de373841e9233a3abfc210158ce8 Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 14:53:30 +0000
+Subject: [PATCH 2/5] ci(frontend): stop printing the production API/socket
+ URLs into CI logs; npm ci without --legacy-peer-deps
+
+Removes the two 'Temporary Debug' steps. The eslint-plugin-react-hooks 7.1.1 bump made a clean, lockfile-exact install possible.
+---
+ .github/workflows/user.js.yml | 14 +++-----------
+ 1 file changed, 3 insertions(+), 11 deletions(-)
+
+diff --git a/.github/workflows/user.js.yml b/.github/workflows/user.js.yml
+index 744957d..05e1c5a 100644
+--- a/.github/workflows/user.js.yml
++++ b/.github/workflows/user.js.yml
+@@ -20,9 +20,10 @@ jobs:
+         with:
+           node-version: 20
+ 
+-      # Install Dependencies
++      # Install Dependencies (lockfile-exact; the eslint-plugin-react-hooks
++      # 7.1.1 bump removed the ESLint 10 peer conflict, so no --legacy-peer-deps)
+       - name: Install dependencies
+-        run: npm install --legacy-peer-deps
++        run: npm ci --no-audit --no-fund
+ 
+       # Create Production Env File for Vite
+       - name: Create .env.production
+@@ -30,19 +31,10 @@ jobs:
+           echo "VITE_APP_API_URL=${{ secrets.VITE_APP_API_URL }}" > .env.production
+           echo "VITE_APP_Sokect_URL=${{ secrets.VITE_APP_Sokect_URL }}" >> .env.production
+ 
+-      # Debug Env File (Temporary - remove later if needed)
+-      - name: Verify env file
+-        run: cat .env.production
+-
+       # Build Project
+       - name: Build project
+         run: npm run build
+ 
+-      # Verify API URL exists in build (Temporary Debug)
+-      - name: Verify API URL inside build
+-        run: |
+-          grep -R "${{ secrets.VITE_APP_API_URL }}" dist || true
+-
+       # Authenticate with Google Cloud
+       - name: Authenticate to GCP
+         uses: google-github-actions/auth@v2
+-- 
+2.43.0
+

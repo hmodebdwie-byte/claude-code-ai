@@ -1,0 +1,294 @@
+From 8096359ade62f28adead52078285125f1991f81c Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 14:52:59 +0000
+Subject: [PATCH 2/3] fix(admin): break the login/admin redirect loop for
+ non-admin or incomplete sessions
+
+ProtectedRoute now reads user/token from the auth store (not the base64 localStorage blob), sends non-admin and half-restored sessions to /unauthorized instead of bouncing to /, and the recovery page signs out before returning to login. Adds tests/admin-auth-routing.test.cjs (12 cases). Ported from the local tool's validated but never-applied proposal admin-auth-loop-2026-09-12 (baseline 4/12 -> 12/12).
+---
+ package.json                         |   3 +-
+ src/Pages/ProtectedRoute.jsx         |  22 ++--
+ src/Pages/UnauthorizedPage/index.jsx |  14 ++-
+ tests/README.admin-auth.md           |  15 +++
+ tests/admin-auth-routing.test.cjs    | 146 +++++++++++++++++++++++++++
+ 5 files changed, 182 insertions(+), 18 deletions(-)
+ create mode 100644 tests/README.admin-auth.md
+ create mode 100644 tests/admin-auth-routing.test.cjs
+
+diff --git a/package.json b/package.json
+index e13b23d..05acfa4 100644
+--- a/package.json
++++ b/package.json
+@@ -8,7 +8,8 @@
+     "build": "vite build",
+     "lint": "eslint .",
+     "preview": "vite preview --host 0.0.0.0 --port 5002 ",
+-    "test:regression:npc-risk": "node --test tests/npc-risk-regression.test.cjs"
++    "test:regression:npc-risk": "node --test tests/npc-risk-regression.test.cjs",
++    "test:regression:admin-auth": "node --test tests/admin-auth-routing.test.cjs"
+   },
+   "dependencies": {
+     "@reduxjs/toolkit": "^2.10.1",
+diff --git a/src/Pages/ProtectedRoute.jsx b/src/Pages/ProtectedRoute.jsx
+index f2cf81c..562cd89 100644
+--- a/src/Pages/ProtectedRoute.jsx
++++ b/src/Pages/ProtectedRoute.jsx
+@@ -1,13 +1,8 @@
+ import { Navigate } from 'react-router-dom';
+ import { useAuth } from '../store/hooks';
+-import { getEncryptedUser } from '../utils/encryption';
+ 
+ const ProtectedRoute = ({ children, requireRole }) => {
+-  const { isAuthenticated } = useAuth();
+-
+-  const getUserData = () => {
+-    return getEncryptedUser() || null;
+-  }
++  const { isAuthenticated, user, token } = useAuth();
+ 
+   // Deliberately does NOT gate on `auth.loading`. That flag is shared by many
+   // in-flight auth thunks (MFA status, deposits, ledger, ...), so blocking on it
+@@ -15,20 +10,23 @@ const ProtectedRoute = ({ children, requireRole }) => {
+   // subtree and remounting it once the request settled, which re-fired every
+   // mount effect in a loop. Session identity is resolved synchronously from
+   // localStorage in authSlice's initialState, so there is nothing to wait for.
+-  const userData = getUserData();
++  const userData = user;
+ 
+-  if (!isAuthenticated || !userData) {
+-    return <Navigate to="/login" replace />;
++  if (!isAuthenticated || !token || !userData || typeof userData !== 'object') {
++    // Login redirects stored tokens back here. An incomplete saved session must
++    // reach a recovery page rather than bounce between Login and this guard.
++    const hasIncompleteSession = Boolean(isAuthenticated || token || userData);
++    return <Navigate to={hasIncompleteSession ? "/unauthorized" : "/login"} replace />;
+   }
+ 
+   if (requireRole) {
+-    const userRole = (userData?.role || 'user').toLowerCase();
++    const userRole = (typeof userData.role === 'string' ? userData.role : 'user').toLowerCase();
+ 
+     if (requireRole.toLowerCase() === 'admin' && userRole !== 'admin') {
+-      return <Navigate to="/" replace />;
++      return <Navigate to="/unauthorized" replace />;
+     }
+   } else {
+-    const userRole = (userData?.role || 'user').toLowerCase();
++    const userRole = (typeof userData.role === 'string' ? userData.role : 'user').toLowerCase();
+     if (userRole === 'admin') {
+       return <Navigate to="/admin" replace />;
+     }
+diff --git a/src/Pages/UnauthorizedPage/index.jsx b/src/Pages/UnauthorizedPage/index.jsx
+index fd301ba..45f1271 100644
+--- a/src/Pages/UnauthorizedPage/index.jsx
++++ b/src/Pages/UnauthorizedPage/index.jsx
+@@ -1,24 +1,28 @@
+ import React from "react";
+ import { useNavigate } from "react-router-dom";
++import { useAppDispatch } from "../../store/hooks";
++import { logout } from "../../store/slices/authSlice";
+ import "./UnauthorizedPage.css";
+ 
+ const UnauthorizedPage = () => {
+   const navigate = useNavigate();
++  const dispatch = useAppDispatch();
+ 
+   const handleLogin = () => {
+-    navigate("/login");
++    dispatch(logout());
++    navigate("/login", { replace: true });
+   };
+ 
+   return (
+     <div className="unauthorized-container">
+       <div className="unauthorized-content">
+-        <h1 className="auth-logo">401</h1>
+-        <h2 className="auth-logo">Unauthorized Access</h2>
++        <h1 className="auth-logo">403</h1>
++        <h2 className="auth-logo">Admin access unavailable</h2>
+         <p className="unauthorized-text">
+-          You need to log in to access this page. Please sign in to continue.
++          Your current account or saved session cannot open this dashboard. Sign in with an admin account to continue.
+         </p>
+         <button className="auth-button" onClick={handleLogin}>
+-          Go to Login
++          Sign in with another account
+         </button>
+       </div>
+     </div>
+diff --git a/tests/README.admin-auth.md b/tests/README.admin-auth.md
+new file mode 100644
+index 0000000..10454c5
+--- /dev/null
++++ b/tests/README.admin-auth.md
+@@ -0,0 +1,15 @@
++# Admin authentication routing regression
++
++From the full admin repository, after installing its existing dependencies:
++
++```sh
++npm run test:regression:admin-auth
++```
++
++Equivalent command: `node --test tests/admin-auth-routing.test.cjs`.
++
++The tests use esbuild already installed by Vite. They execute the actual ProtectedRoute, Login and access-denied page components with in-memory React/router/storage boundaries. There is no network, browser login, real token, backend request, or permission mutation.
++
++The cases cover allowed ADMIN/admin roles, denied or missing roles, malformed role values, orphan tokens, missing user profiles, incomplete authentication, redirect-chain convergence, and sign-out recovery. Backend authorization remains authoritative; the tests do not validate real account permissions or token signatures.
++
++Run these tests from the full exported/current source checkout. A filtered analysis snapshot that excludes Login.jsx is not a complete runtime checkout and cannot execute this entire suite.
+diff --git a/tests/admin-auth-routing.test.cjs b/tests/admin-auth-routing.test.cjs
+new file mode 100644
+index 0000000..eb28b4c
+--- /dev/null
++++ b/tests/admin-auth-routing.test.cjs
+@@ -0,0 +1,146 @@
++// Portable source-component regression: npm run test:regression:admin-auth
++// Uses esbuild already installed by Vite; no browser, network, or real session.
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const path = require('node:path');
++const vm = require('node:vm');
++const { createRequire } = require('node:module');
++const root = path.resolve(__dirname, '..');
++const localRequire = createRequire(path.join(root, 'package.json'));
++const esbuild = createRequire(localRequire.resolve('vite'))('esbuild');
++const sourceCache = new Map();
++const jsx = (type, props) => ({ type, props: props || {} });
++const Navigate = function Navigate() {};
++const Link = function Link() {};
++
++function fixture(auth, storedToken = auth.token) {
++  const events = [], effects = [];
++  const entries = new Map(storedToken ? [['token', storedToken]] : []);
++  const state = { ...auth };
++  const storage = { getItem: key => entries.get(key) ?? null,
++    setItem: (key, value) => entries.set(key, String(value)),
++    removeItem: key => entries.delete(key) };
++  const navigate = (to, options) => events.push({ type: 'navigate', to, options });
++  const dispatch = action => {
++    events.push({ type: 'dispatch', action });
++    if (action.type === 'auth/logout') {
++      state.isAuthenticated = false;
++      state.user = null;
++      state.token = null;
++      entries.delete('token');
++    }
++    return action;
++  };
++  const hooks = { useAuth: () => state, useAppDispatch: () => dispatch };
++  const authActions = {
++    logout: () => ({ type: 'auth/logout' }),
++    clearError: () => ({ type: 'auth/clearError' }),
++    loginUser: Object.assign(() => {}, { fulfilled: { match: () => false } }),
++    verifyOTP: Object.assign(() => {}, { fulfilled: { match: () => false } }),
++  };
++  const modules = {
++    react: { useState: initial => [initial, () => {}], useEffect: fn => effects.push(fn) },
++    'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
++    'react-router-dom': { Navigate, Link, useNavigate: () => navigate },
++    'react-toastify': { toast: { info() {}, success() {}, error() {} } },
++    '../store/hooks': hooks, './store/hooks': hooks, '../../store/hooks': hooks,
++    './store/slices/authSlice': authActions, '../../store/slices/authSlice': authActions,
++    '../utils/encryption': { getEncryptedUser: () => state.user },
++  };
++  function component(relative) {
++    if (!sourceCache.has(relative)) sourceCache.set(relative,
++      esbuild.transformSync(fs.readFileSync(path.join(root, relative), 'utf8'),
++        { loader: 'jsx', format: 'cjs', jsx: 'automatic' }).code);
++    const module = { exports: {} };
++    vm.runInNewContext(sourceCache.get(relative), {
++      module, exports: module.exports, localStorage: storage, console,
++      require(name) {
++        if (Object.hasOwn(modules, name)) return modules[name];
++        if (/\.(css|png)$/.test(name)) return {};
++        throw new Error('Unexpected component dependency: ' + name);
++      },
++    }, { filename: relative });
++    return module.exports.default;
++  }
++  function guard() {
++    return component('src/Pages/ProtectedRoute.jsx')({ requireRole: 'admin', children: 'ADMIN_CONTENT' });
++  }
++  function login() {
++    effects.length = 0;
++    events.length = 0;
++    const view = component('src/Login.jsx')();
++    effects.forEach(effect => effect());
++    return { view, next: events.find(event => event.type === 'navigate')?.to };
++  }
++  function settle(initial) {
++    let route = initial;
++    const visited = new Set();
++    for (let step = 0; step < 8; step++) {
++      assert.ok(!visited.has(route), 'Redirect loop revisited ' + route);
++      visited.add(route);
++      if (route === '/unauthorized') return route;
++      if (route === '/admin') {
++        const result = guard();
++        if (result === 'ADMIN_CONTENT') return route;
++        route = result.props.to;
++      } else {
++        const result = login();
++        if (!result.next) return route;
++        route = result.next;
++      }
++    }
++    throw new Error('Redirect chain did not settle');
++  }
++  return { state, events, guard, login, settle, component };
++}
++
++const SESSION_ID = ['fixture', 'session'].join('-');
++const ORPHAN_ID = ['orphan', 'session'].join('-');
++const signedOut = { isAuthenticated: false, user: null, token: null };
++const session = role => ({ isAuthenticated: true, user: { role }, token: SESSION_ID });
++
++test('fully signed-out visitor reaches login', () => {
++  const f = fixture(signedOut);
++  assert.equal(f.guard().props.to, '/login');
++  assert.equal(f.settle('/admin'), '/login');
++});
++test('existing ADMIN role remains allowed', () => assert.equal(fixture(session('ADMIN')).guard(), 'ADMIN_CONTENT'));
++test('existing lowercase admin role remains allowed', () => assert.equal(fixture(session('admin')).guard(), 'ADMIN_CONTENT'));
++test('USER role reaches a stable denied page', () => assert.equal(fixture(session('USER')).settle('/'), '/unauthorized'));
++test('unrecognized role is denied without expanding privileges', () => assert.equal(fixture(session('SUPER_ADMIN')).settle('/admin'), '/unauthorized'));
++test('missing role is denied without a redirect cycle', () => assert.equal(fixture(session(undefined)).settle('/admin'), '/unauthorized'));
++test('malformed role value cannot crash the route guard', () => assert.equal(fixture(session({ name: 'ADMIN' })).settle('/admin'), '/unauthorized'));
++test('stored token with no user reaches session recovery', () => {
++  const f = fixture({ ...signedOut, token: ORPHAN_ID });
++  assert.equal(f.settle('/login'), '/unauthorized');
++});
++test('authenticated flag without a profile reaches session recovery', () => {
++  const f = fixture({ isAuthenticated: true, user: null, token: SESSION_ID });
++  assert.equal(f.settle('/'), '/unauthorized');
++});
++test('authenticated user without a token cannot enter admin', () => {
++  const f = fixture({ isAuthenticated: true, user: { role: 'ADMIN' }, token: null });
++  assert.equal(f.settle('/'), '/unauthorized');
++});
++test('authenticated admin login still settles on the dashboard', () => assert.equal(fixture(session('ADMIN')).settle('/login'), '/admin'));
++test('recovery signs out before navigating, so login stays usable', () => {
++  const f = fixture(session('USER'));
++  const view = f.component('src/Pages/UnauthorizedPage/index.jsx')();
++  let button;
++  function visit(node) {
++    if (!node || typeof node !== 'object') return;
++    if (node.type === 'button') button = node;
++    const children = node.props?.children;
++    (Array.isArray(children) ? children : [children]).forEach(visit);
++  }
++  visit(view);
++  assert.ok(button?.props.onClick, 'Recovery control must exist');
++  button.props.onClick();
++  assert.equal(f.events[0].type, 'dispatch');
++  assert.equal(f.events[0].action.type, 'auth/logout');
++  assert.equal(f.events[1].type, 'navigate');
++  assert.equal(f.events[1].to, '/login');
++  assert.equal(f.events[1].options.replace, true);
++  assert.equal(f.settle('/login'), '/login');
++});
+-- 
+2.43.0
+

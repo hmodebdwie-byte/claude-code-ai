@@ -1,0 +1,77 @@
+From ebe19f8d2897cbe78d13375b23464d89eb9fa45a Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 15:07:27 +0000
+Subject: [PATCH 5/5] feat(battle): end-of-battle result pop-up disabled by
+ default (BATTLE_RESULT_MODAL_ENABLED / VITE_BATTLE_RESULT_MODAL)
+
+Service agreement (Aug 2026): 'disable the end-of-battle message entirely'. Kept behind a build-time switch so it can be restored without a code change.
+---
+ src/core/constants.js   |  9 +++++++++
+ src/screens/Matches.jsx | 19 ++++++++++++-------
+ 2 files changed, 21 insertions(+), 7 deletions(-)
+
+diff --git a/src/core/constants.js b/src/core/constants.js
+index f53e78b..ecf4f01 100644
+--- a/src/core/constants.js
++++ b/src/core/constants.js
+@@ -34,3 +34,12 @@ export const STABILITY = {
+     leaderboardRows: 50,
+   },
+ };
++
++/**
++ * End-of-battle result pop-up. The Aug 2026 service agreement asks for the
++ * end-of-battle message to be disabled entirely; balances, ledger and the
++ * transaction celebration still update through their own channels. Flip to
++ * true (or set VITE_BATTLE_RESULT_MODAL=true at build time) to bring it back.
++ */
++export const BATTLE_RESULT_MODAL_ENABLED =
++  String(import.meta.env.VITE_BATTLE_RESULT_MODAL ?? 'false').toLowerCase() === 'true';
+diff --git a/src/screens/Matches.jsx b/src/screens/Matches.jsx
+index c48731f..fe02dd0 100644
+--- a/src/screens/Matches.jsx
++++ b/src/screens/Matches.jsx
+@@ -15,6 +15,7 @@ import BattleResultContainer from '../features/battle/BattleResultContainer';
+ import IndicatorsContainer from '../features/battle/IndicatorsContainer';
+ 
+ import { prefetchRoute } from '../routeLoaders';
++import { BATTLE_RESULT_MODAL_ENABLED } from '../core/constants';
+ 
+ const minSwipeDistance = 50;
+ 
+@@ -48,9 +49,11 @@ const Matches = () => {
+   /** Only whether cooldown is active — avoids rerendering Matches every second on remaining ticks. */
+   const cooldownActiveFlag = matchStore((s) => s.cooldownDisplay?.active ?? false);
+ 
+-  /* Modal opens only after `battleEndDetails` populates battleEndData */
++  /* Modal opens only after `battleEndDetails` populates battleEndData — and only
++     when the end-of-battle message is enabled (off by default per the Aug 2026
++     service agreement; see BATTLE_RESULT_MODAL_ENABLED). */
+   useEffect(() => {
+-    setBattleResultModalOpen(Boolean(battleEndData));
++    setBattleResultModalOpen(BATTLE_RESULT_MODAL_ENABLED && Boolean(battleEndData));
+   }, [battleEndData]);
+ 
+   useEffect(() => {
+@@ -233,11 +236,13 @@ const Matches = () => {
+           )}
+         </div>
+       </div>
+-      <BattleResultContainer
+-        isOpen={battleResultModalOpen}
+-        onClose={handleCloseModal}
+-        onPlayAgain={handleCloseModal}
+-      />
++      {BATTLE_RESULT_MODAL_ENABLED && (
++        <BattleResultContainer
++          isOpen={battleResultModalOpen}
++          onClose={handleCloseModal}
++          onPlayAgain={handleCloseModal}
++        />
++      )}
+     </MainLayout>
+   );
+ };
+-- 
+2.43.0
+

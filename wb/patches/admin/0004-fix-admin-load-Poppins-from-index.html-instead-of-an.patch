@@ -1,0 +1,119 @@
+From f315347bf4d3dd42538613c2399e4e5a7d767492 Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 16:01:40 +0000
+Subject: fix(admin): load Poppins from index.html instead of an @import inside
+ the lazy /admin chunk's CSS
+
+NpcSimulator.css began with `@import url('https://fonts.googleapis.com/...')`.
+That stylesheet is part of the lazily loaded /admin route chunk, and Chromium
+reports a chunk stylesheet as errored when a nested @import fails, so Vite's
+CSS preload helper rejected ("Unable to preload CSS for /assets/index-*.css")
+and the ErrorBoundary showed "React Application Error" right after a
+successful login whenever fonts.googleapis.com was unreachable (ad blocker,
+corporate firewall, offline).
+
+- drop the @import; load the font once from index.html with preconnect +
+  a top-level <link rel="stylesheet"> (a failed top-level link only falls
+  back to the system font, it never blocks a route chunk)
+- give every 'Poppins' declaration a real fallback stack
+
+Verified in headless Chromium with requests to fonts.googleapis.com aborted:
+the dashboard renders after login; dist/assets/*.css no longer contains a
+googleapis @import.
+---
+ index.html                                      | 7 +++++++
+ src/Pages/AdminDashboard/NpcSimulator.css       | 8 +++++---
+ src/Pages/KycWebhookTable/index.css             | 2 +-
+ src/Pages/Notfound/notfound.css                 | 2 +-
+ src/Pages/UnauthorizedPage/UnauthorizedPage.css | 2 +-
+ 5 files changed, 15 insertions(+), 6 deletions(-)
+
+diff --git a/index.html b/index.html
+index 8891af3..11813bf 100644
+--- a/index.html
++++ b/index.html
+@@ -17,6 +17,13 @@
+   <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+   <meta name="apple-mobile-web-app-title" content="Ticktrade" />
+ 
++  <!-- Poppins for the dashboard. Loaded here, not via @import inside a route stylesheet:
++       a top-level <link> that fails (ad blocker, firewall, offline) only falls back to the
++       system font, while a failed @import inside a lazy chunk's CSS aborts that route. -->
++  <link rel="preconnect" href="https://fonts.googleapis.com" />
++  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
++  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" />
++
+   <title>Ticktrade Admin</title>
+ </head>
+ 
+diff --git a/src/Pages/AdminDashboard/NpcSimulator.css b/src/Pages/AdminDashboard/NpcSimulator.css
+index 2c31dcb..0ee3e66 100644
+--- a/src/Pages/AdminDashboard/NpcSimulator.css
++++ b/src/Pages/AdminDashboard/NpcSimulator.css
+@@ -1,11 +1,13 @@
+-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
++/* Poppins is loaded once from index.html (a top-level <link>), never via @import here:
++   this file belongs to the lazily loaded /admin chunk, and a failed nested @import makes the
++   browser report the chunk stylesheet as errored, which aborts the whole route. */
+ 
+ .npc-page {
+   padding: 20px;
+   background: #000000;
+   min-height: 100vh;
+   color: #ffffff;
+-  font-family: 'Poppins', sans-serif;
++  font-family: 'Poppins', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+ }
+ 
+ .npc-header {
+@@ -656,7 +658,7 @@ npc-card {
+   font-weight: 500;
+   transition: all 0.3s ease;
+   box-sizing: border-box;
+-  font-family: 'Poppins', sans-serif;
++  font-family: 'Poppins', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+ }
+ 
+ .modal-input:focus {
+diff --git a/src/Pages/KycWebhookTable/index.css b/src/Pages/KycWebhookTable/index.css
+index b0386d4..76cf85c 100644
+--- a/src/Pages/KycWebhookTable/index.css
++++ b/src/Pages/KycWebhookTable/index.css
+@@ -1,7 +1,7 @@
+ .webhook-page {
+   padding: 0;
+   color: white;
+-  font-family: "Poppins", sans-serif;
++  font-family: 'Poppins', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+ }
+ 
+ .webhook-page h2 {
+diff --git a/src/Pages/Notfound/notfound.css b/src/Pages/Notfound/notfound.css
+index cd6ddf8..b9963c6 100644
+--- a/src/Pages/Notfound/notfound.css
++++ b/src/Pages/Notfound/notfound.css
+@@ -7,7 +7,7 @@
+   align-items: center;
+   height: 100vh;
+   text-align: center;
+-  font-family: 'Poppins', sans-serif;
++  font-family: 'Poppins', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+   padding: 0 1rem;
+ }
+ 
+diff --git a/src/Pages/UnauthorizedPage/UnauthorizedPage.css b/src/Pages/UnauthorizedPage/UnauthorizedPage.css
+index 0fa9af2..7fd9ace 100644
+--- a/src/Pages/UnauthorizedPage/UnauthorizedPage.css
++++ b/src/Pages/UnauthorizedPage/UnauthorizedPage.css
+@@ -5,7 +5,7 @@
+   height: 100vh;
+   background: linear-gradient(145deg, #1c1c1c, #2b2b2b);
+   color: #fff;
+-  font-family: "Poppins", sans-serif;
++  font-family: 'Poppins', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+ }
+ 
+ .unauthorized-content {
+-- 
+2.43.0
+

@@ -1,0 +1,65 @@
+From 2cdee0eaa3d21b61d79e735c468099a3b6a6bdad Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <workbench@local>
+Date: Sun, 13 Sep 2026 14:53:30 +0000
+Subject: [PATCH 3/3] ci(admin): stop printing the production API URL into CI
+ logs; npm ci; never cache sw.js/manifest on the CDN
+
+Removes the two 'Temporary Debug' steps (cat .env.production, grep secret in dist). Uses npm ci (lockfile-exact). Adds the same no-cache headers the trading app already sets for sw.js and manifest.webmanifest, since the admin is a PWA with registerType autoUpdate.
+---
+ .github/workflows/admin.yml | 22 +++++++++++-----------
+ 1 file changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/.github/workflows/admin.yml b/.github/workflows/admin.yml
+index 6863d21..e756ea2 100644
+--- a/.github/workflows/admin.yml
++++ b/.github/workflows/admin.yml
+@@ -20,28 +20,19 @@ jobs:
+         with:
+           node-version: 20
+ 
+-      # Install Dependencies
++      # Install Dependencies (lockfile-exact; fails fast on drift)
+       - name: Install dependencies
+-        run: npm install
++        run: npm ci --no-audit --no-fund
+ 
+       # Create Production Env File for Vite
+       - name: Create .env.production
+         run: |
+           echo "VITE_APP_API_URL=${{ secrets.VITE_APP_API_URL }}" > .env.production
+ 
+-      # Debug Env File (Temporary - remove later if needed)
+-      - name: Verify env file
+-        run: cat .env.production
+-
+       # Build Project
+       - name: Build project
+         run: npm run build
+ 
+-      # Verify API URL exists in build (Temporary Debug)
+-      - name: Verify API URL inside build
+-        run: |
+-          grep -R "${{ secrets.VITE_APP_API_URL }}" dist || true
+-
+       # Authenticate with Google Cloud
+       - name: Authenticate to GCP
+         uses: google-github-actions/auth@v2
+@@ -74,6 +65,15 @@ jobs:
+           -h "Cache-Control:no-store,max-age=0" \
+           gs://${{ secrets.BUCKET_NAME }}/index.html
+ 
++          # The admin is a PWA (registerType autoUpdate): a cached sw.js or
++          # manifest delays every deploy for as long as the CDN keeps it.
++          gsutil setmeta \
++          -h "Cache-Control:no-cache,max-age=0,must-revalidate" \
++          gs://${{ secrets.BUCKET_NAME }}/sw.js || true
++          gsutil setmeta \
++          -h "Cache-Control:no-cache,max-age=0,must-revalidate" \
++          gs://${{ secrets.BUCKET_NAME }}/manifest.webmanifest || true
++
+       # Invalidate CDN Cache
+       - name: Invalidate CDN cache
+         run: |
+-- 
+2.43.0
+
