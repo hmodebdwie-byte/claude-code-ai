@@ -79,7 +79,7 @@ legacy in-transaction counter-trades are skipped.
 
 Groups → keys (defaults). "live" applies mid-round, "next round" is read when a round opens, "settlement" at settlement.
 
-* engine: `mode` organic (live); `houseMaxRealLoserPoolRule` false (settlement)
+* engine: `mode` organic (live); `houseMaxRealLoserPoolRule` false (next round; frozen at round start)
 * roundStart (next round): `initialSpawnsMin` 1, `initialSpawnsMax` 5, `spawnDelayMinMs` 1000, `spawnDelayMaxMs` 15000,
   `peakInitialSpawnsMin` 10, `peakInitialSpawnsMax` 20, `peakInitialWindowMs` 15000, `peakHours` "" (e.g.
   `18:00-23:00,12:00-14:00`), `peakTimezoneOffsetMinutes` 0
