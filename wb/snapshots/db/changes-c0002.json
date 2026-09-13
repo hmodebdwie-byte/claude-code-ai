@@ -1,0 +1,1 @@
+{"id":"c0002","at":"2026-09-13T14:50:00Z","title":"Sandbox blocked: network access = None","repo":"all","status":"blocked","files":[],"notes":"registry.npmjs.org, binaries.prisma.sh and Docker Hub return 403 host_not_allowed, so dependencies cannot be installed. Postgres 16 and Redis 7 are running locally. Waiting for the cloud environment's Network access to be set to Trusted."}

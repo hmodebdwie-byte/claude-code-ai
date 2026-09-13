@@ -1,0 +1,366 @@
+diff -ruN a/package.json b/package.json
+--- a/package.json	2026-09-12 06:31:22.000000000 +0000
++++ b/package.json	2020-01-01 00:00:00.000000000 +0000
+@@ -7,7 +7,8 @@
+     "dev": "vite --port 5002",
+     "build": "vite build",
+     "lint": "eslint .",
+-    "preview": "vite preview --host 0.0.0.0 --port 5002 "
++    "preview": "vite preview --host 0.0.0.0 --port 5002 ",
++    "test:regression:npc-risk": "node --test tests/npc-risk-regression.test.cjs"
+   },
+   "dependencies": {
+     "@reduxjs/toolkit": "^2.10.1",
+diff -ruN a/src/Pages/AdminDashboard/npcSimulator.jsx b/src/Pages/AdminDashboard/npcSimulator.jsx
+--- a/src/Pages/AdminDashboard/npcSimulator.jsx	2026-09-12 06:31:22.000000000 +0000
++++ b/src/Pages/AdminDashboard/npcSimulator.jsx	2020-01-01 00:00:00.000000000 +0000
+@@ -1,5 +1,6 @@
+ import React, { useState, useEffect, useCallback, useRef } from "react";
+ import "./NpcSimulator.css";
++import { deriveNpcRuntimeStatus } from "../../utils/npcRuntimeStatus";
+ 
+ import { useSelector } from "react-redux";
+ import { useAppDispatch } from "../../store/hooks";
+@@ -347,6 +348,8 @@
+   const [npcSearch, setNpcSearch] = useState('');
+   const [recentTrades, setRecentTrades] = useState([]);
+   const [isRunning, setIsRunning] = useState(false);
++  const [simulatorStatus, setSimulatorStatus] = useState(null);
++  const simulatorRuntime = deriveNpcRuntimeStatus(simulatorStatus);
+   const [showCreateModal, setShowCreateModal] = useState(false);
+   const [isLoading, setIsLoading] = useState(true);
+   const [showModal, setShowModal] = useState(false);
+@@ -587,11 +590,13 @@
+     dispatch(GetNPCSimulatorStatus())
+       .unwrap()
+       .then((res) => {
+-        setIsRunning(res.active || false);
++        setSimulatorStatus(res);
++        setIsRunning(deriveNpcRuntimeStatus(res).enabled);
+         setRecentTrades(res.recent_trades || []);
+         setIsLoading(false);
+       })
+       .catch(() => {
++        setSimulatorStatus(null);
+         toast.error("Failed to fetch simulator status");
+         setIsLoading(false);
+       });
+@@ -935,10 +940,12 @@
+ 
+     dispatch(action())
+       .unwrap()
+-      .then(() => {
+-        toast.success(
+-          isRunning ? "NPC Simulator Stopped" : "NPC Simulator Started",
+-        );
++      .then((res) => {
++        if (!isRunning && res?.runningOnLeader === false) {
++          toast.warn(res?.message || "NPC enabled, but its worker is not running yet.");
++        } else {
++          toast.success(res?.message || (isRunning ? "NPC stop requested" : "NPC start requested"));
++        }
+         fetchSimulatorStatus();
+       })
+       .catch((err) => {
+@@ -1109,10 +1116,10 @@
+         <>
+ 
+       {/* STATUS CARD */}
+-      <div className={`sim-status-card ${isRunning ? "running" : "stopped"}`}>
+-        <div className={`status-dot ${isRunning ? "active" : ""}`} />
++      <div className={`sim-status-card ${simulatorRuntime.running ? "running" : "stopped"}`}>
++        <div className={`status-dot ${simulatorRuntime.running ? "active" : ""}`} />
+         <span className="status-text">
+-          {isRunning ? "SIMULATOR ACTIVE" : "SIMULATOR STOPPED"}
++          {simulatorRuntime.label}
+         </span>
+       </div>
+ 
+diff -ruN a/src/Pages/RiskManagementTerminal/index.jsx b/src/Pages/RiskManagementTerminal/index.jsx
+--- a/src/Pages/RiskManagementTerminal/index.jsx	2026-09-12 06:31:22.000000000 +0000
++++ b/src/Pages/RiskManagementTerminal/index.jsx	2020-01-01 00:00:00.000000000 +0000
+@@ -51,17 +51,17 @@
+   const { tick: liveTick, connected: socketConnected } = useRiskTerminalSocket();
+ 
+   // REST is the initial paint + fallback; the socket tick (~1/s) takes over
+-  // once it starts arriving for the SAME battle. A live tick for a
++  // once it starts arriving for the SAME battle while connected. A live tick for a
+   // different battle_id (stale REST, or REST hasn't caught up to a new
+   // round yet) is ignored rather than shown, since its scenario numbers
+   // wouldn't correspond to what's on screen.
+   const restBattle = riskTerminalLiveState?.active_battle;
+   const activeBattle = useMemo(() => {
+-    if (liveTick && (!restBattle || liveTick.battle_id === restBattle.battle_id)) {
++    if (socketConnected && restBattle && liveTick && liveTick.battle_id === restBattle.battle_id) {
+       return liveTick;
+     }
+     return restBattle;
+-  }, [liveTick, restBattle]);
++  }, [liveTick, restBattle, socketConnected]);
+ 
+   const refresh = () => {
+     dispatch(fetchRiskTerminalLiveState());
+diff -ruN a/src/hooks/useRiskTerminalSocket.js b/src/hooks/useRiskTerminalSocket.js
+--- a/src/hooks/useRiskTerminalSocket.js	2026-09-12 06:31:22.000000000 +0000
++++ b/src/hooks/useRiskTerminalSocket.js	2020-01-01 00:00:00.000000000 +0000
+@@ -15,14 +15,28 @@
+   useEffect(() => {
+     if (!socket) return undefined;
+ 
++    let expiryTimer = null;
++    const clearTick = () => {
++      if (expiryTimer !== null) clearTimeout(expiryTimer);
++      expiryTimer = null;
++      setTick(null);
++    };
++    // A connected socket can stop publishing this channel. Expire its last
++    // tick so the periodic REST response becomes authoritative again.
+     const onUpdate = (payload) => {
+       if (!payload || typeof payload !== "object") return;
++      if (expiryTimer !== null) clearTimeout(expiryTimer);
+       setTick(payload);
++      expiryTimer = setTimeout(clearTick, 5000);
+     };
+ 
++    setTick(null);
+     socket.on("riskTerminalUpdate", onUpdate);
++    socket.on("disconnect", clearTick);
+     return () => {
++      if (expiryTimer !== null) clearTimeout(expiryTimer);
+       socket.off("riskTerminalUpdate", onUpdate);
++      socket.off("disconnect", clearTick);
+     };
+   }, [socket]);
+ 
+diff -ruN a/src/utils/npcRuntimeStatus.js b/src/utils/npcRuntimeStatus.js
+--- a/src/utils/npcRuntimeStatus.js	1970-01-01 00:00:00.000000000 +0000
++++ b/src/utils/npcRuntimeStatus.js	2020-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,18 @@
++/** Desired enablement controls Start/Stop; leader heartbeat controls activity. */
++export function deriveNpcRuntimeStatus(status) {
++  if (!status || typeof status !== "object") {
++    return { enabled: false, running: false, label: "STATUS UNAVAILABLE" };
++  }
++  const enabled = (status.desiredActive ?? status.active) === true;
++  const running = enabled && status.runningOnLeader === true;
++  const host = status.mode === "npc-worker" ? "WORKER" : "ENGINE";
++  return {
++    enabled,
++    running,
++    label: running
++      ? "SIMULATOR RUNNING"
++      : enabled
++        ? `ENABLED · ${host} NOT RUNNING`
++        : "SIMULATOR STOPPED",
++  };
++}
+diff -ruN a/tests/README.npc-risk.md b/tests/README.npc-risk.md
+--- a/tests/README.npc-risk.md	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/README.npc-risk.md	2020-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,17 @@
++# NPC and Risk Terminal regression tests
++
++After the admin app's normal dependency installation, run from its root:
++
++```sh
++npm run test:regression:npc-risk
++```
++
++Equivalent command:
++
++```sh
++node --test tests/npc-risk-regression.test.cjs
++```
++
++These 16 tests read this checkout's actual Risk Terminal selection callback, socket hook, NPC status callback and status helper. They use the Babel dependency already supplied by `@vitejs/plugin-react` to parse source; they do not add a new package. In-memory React/socket/timer doubles exercise disconnect fallback, stale tick expiry, round changes, cleanup, and enabled-versus-running status.
++
++They do not mount a full browser DOM or contact a service. Keep browser and full-stack tests in addition to these source-level regressions. No model, application server, credentials or external fixture folders are required.
+diff -ruN a/tests/npc-risk-regression.test.cjs b/tests/npc-risk-regression.test.cjs
+--- a/tests/npc-risk-regression.test.cjs	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/npc-risk-regression.test.cjs	2020-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,185 @@
++// Run from admin root: npm run test:regression:npc-risk
++// Uses Babel already installed by @vitejs/plugin-react; no new dependency or service.
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const path = require('node:path');
++const vm = require('node:vm');
++const { createRequire } = require('node:module');
++const rootAdmin = path.resolve(__dirname, '..');
++const localRequire = createRequire(path.join(rootAdmin, 'package.json'));
++const babel = createRequire(localRequire.resolve('@vitejs/plugin-react'))('@babel/core');
++const sourceFor = (_project, suffix) => path.join(rootAdmin, {
++  'index.jsx': 'src/Pages/RiskManagementTerminal/index.jsx',
++  'useRiskTerminalSocket.js': 'src/hooks/useRiskTerminalSocket.js',
++  'npcSimulator.jsx': 'src/Pages/AdminDashboard/npcSimulator.jsx',
++  'npcRuntimeStatus.js': 'src/utils/npcRuntimeStatus.js',
++}[suffix]);
++function parse(file) {
++  const text = fs.readFileSync(file, 'utf8');
++  return { text, ast: babel.parseSync(text, { configFile: false, babelrc: false, parserOpts: { plugins: ['jsx'] } }) };
++}
++function walk(node, visit) {
++  if (!node || typeof node !== 'object') return;
++  if (typeof node.type === 'string') visit(node);
++  for (const value of Object.values(node)) {
++    if (Array.isArray(value)) value.forEach(child => walk(child, visit));
++    else if (value && typeof value === 'object') walk(value, visit);
++  }
++}
++function loadSource(file, mocks = {}, globals = {}) {
++  const imported = {}, exported = [];
++  const code = babel.transformSync(fs.readFileSync(file, 'utf8'), {
++    configFile: false, babelrc: false,
++    plugins: [() => ({ visitor: {
++      ImportDeclaration(p) {
++        const name = p.node.source.value;
++        assert.ok(Object.hasOwn(mocks, name), `Unexpected runtime dependency: ${name}`);
++        for (const binding of p.node.specifiers) {
++          imported[binding.local.name] = binding.type === 'ImportDefaultSpecifier'
++            ? mocks[name].default : binding.type === 'ImportNamespaceSpecifier'
++              ? mocks[name] : mocks[name][binding.imported.name];
++        }
++        p.remove();
++      },
++      ExportNamedDeclaration(p) {
++        assert.ok(p.node.declaration?.id?.name, 'Expected a named exported function');
++        exported.push(p.node.declaration.id.name);
++        p.replaceWith(p.node.declaration);
++      },
++    } })],
++  }).code;
++  const module = { exports: {} };
++  vm.runInNewContext(code + `\nmodule.exports = {${exported.join(',')}};`,
++    { module, console, setTimeout, clearTimeout, ...imported, ...globals }, { filename: file });
++  return module.exports;
++}
++// Extract the actual useMemo callback from the component, not a copied selector.
++function selectBattle(restBattle, liveTick, socketConnected) {
++  const { text, ast } = parse(sourceFor('admin', 'index.jsx'));
++  let callback;
++  walk(ast, node => {
++    if (node.type === 'VariableDeclarator' && node.id.name === 'activeBattle' && node.init?.type === 'CallExpression') {
++      const expression = node.init.arguments[0];
++      callback = text.slice(expression.start, expression.end);
++    }
++  });
++  assert.ok(callback, 'activeBattle useMemo callback must exist');
++  return vm.runInNewContext(`(${callback})()`, { restBattle, liveTick, socketConnected });
++}
++const rest = { battle_id: 42, pots: { real_buy: 200 } };
++const tick = { battle_id: 42, pots: { real_buy: 100 } };
++test('matching connected tick remains primary', () => assert.equal(selectBattle(rest, tick, true), tick));
++test('disconnect lets refreshed REST replace last matching socket tick', () => assert.equal(selectBattle(rest, tick, false), rest));
++test('REST no-active-battle does not resurrect old socket battle', () => assert.equal(selectBattle(null, tick, true), null));
++test('new REST battle never receives a previous battle tick', () => {
++  const next = { battle_id: 43 };
++  assert.equal(selectBattle(next, tick, true), next);
++});
++
++function hookFixture() {
++  let state = null, cleanup;
++  const handlers = new Map(), timers = new Map();
++  let nextTimer = 0;
++  const socket = { on: (event, handler) => handlers.set(event, handler),
++    off: (event, handler) => { if (handlers.get(event) === handler) handlers.delete(event); } };
++  const hook = loadSource(sourceFor('admin', 'useRiskTerminalSocket.js'), {
++    react: { useState: initial => { state = initial; return [state, value => { state = value; }]; }, useEffect: fn => { cleanup = fn(); } },
++    '../context/WebSocketProvider': { useWebSocket: () => ({ socket, connected: true }) },
++  }, {
++    setTimeout: (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; },
++    clearTimeout: id => timers.delete(id),
++  });
++  hook.useRiskTerminalSocket();
++  return { read: () => state, handlers, timers,
++    emit: (event, value) => handlers.get(event)?.(value), cleanup: () => cleanup() };
++}
++test('socket disconnect clears stale stored tick', () => {
++  const f = hookFixture(); f.emit('riskTerminalUpdate', tick); f.emit('disconnect');
++  assert.equal(f.read(), null);
++});
++test('silent tick channel expires within five seconds so REST fallback can render', () => {
++  const f = hookFixture(); f.emit('riskTerminalUpdate', tick);
++  assert.equal(f.timers.size, 1);
++  const expiry = [...f.timers.values()][0];
++  assert.equal(expiry.ms, 5000); expiry.fn();
++  assert.equal(f.read(), null);
++});
++test('each new tick replaces old expiry; current tick is not cleared by a prior timer', () => {
++  const f = hookFixture(); f.emit('riskTerminalUpdate', tick);
++  const previousTimer = [...f.timers.keys()][0];
++  f.emit('riskTerminalUpdate', { ...tick, computed_at_ms: 2 });
++  assert.equal(f.timers.size, 1);
++  assert.equal(f.timers.has(previousTimer), false);
++  assert.equal(f.read().computed_at_ms, 2);
++});
++test('hook cleanup removes listeners and expiry work', () => {
++  const f = hookFixture(); f.emit('riskTerminalUpdate', tick); f.cleanup();
++  assert.equal(f.handlers.size, 0); assert.equal(f.timers.size, 0);
++});
++
++// Exercise the component's actual fetch-success callback and displayed label.
++function npcStatusDisplay(res) {
++  const { text, ast } = parse(sourceFor('admin', 'npcSimulator.jsx'));
++  let successCallback, labelExpression;
++  walk(ast, node => {
++    if (node.type === 'VariableDeclarator' && node.id.name === 'fetchSimulatorStatus') {
++      walk(node, child => {
++        if (child.type === 'CallExpression' && child.callee.type === 'MemberExpression' && child.callee.property.name === 'then') {
++          const callback = child.arguments[0];
++          successCallback = text.slice(callback.start, callback.end);
++        }
++      });
++    }
++    if (node.type === 'JSXExpressionContainer') {
++      const value = text.slice(node.expression.start, node.expression.end);
++      if (value.includes('"SIMULATOR ACTIVE"') || value === 'simulatorRuntime.label') labelExpression = value;
++    }
++  });
++  assert.ok(successCallback); assert.ok(labelExpression);
++  const derive = loadSource(sourceFor('admin', 'npcRuntimeStatus.js')).deriveNpcRuntimeStatus;
++  let enabled = false, status = null;
++  vm.runInNewContext(`(${successCallback})(res)`, {
++    res, setSimulatorStatus: value => { status = value; }, setIsRunning: value => { enabled = value; },
++    setRecentTrades: () => {}, setIsLoading: () => {}, deriveNpcRuntimeStatus: derive,
++  });
++  const label = vm.runInNewContext(labelExpression, { isRunning: enabled, simulatorRuntime: derive(status) });
++  return { enabled, label };
++}
++test('enabled simulator with absent NPC worker does not display ACTIVE', () => {
++  const shown = npcStatusDisplay({ active: true, desiredActive: true, runningOnLeader: false, mode: 'npc-worker' });
++  assert.equal(shown.enabled, true, 'Stop must remain available for desired enablement');
++  assert.equal(shown.label, 'ENABLED · WORKER NOT RUNNING');
++});
++test('enabled engine without heartbeat does not display ACTIVE', () => {
++  assert.equal(npcStatusDisplay({ active: true, desiredActive: true, runningOnLeader: false, mode: 'engine' }).label,
++    'ENABLED · ENGINE NOT RUNNING');
++});
++test('confirmed leader activity is shown as running', () => {
++  const shown = npcStatusDisplay({ active: true, desiredActive: true, runningOnLeader: true, mode: 'npc-worker' });
++  assert.equal(shown.enabled, true);
++  assert.ok(['SIMULATOR RUNNING', 'SIMULATOR ACTIVE'].includes(shown.label));
++});
++test('disabled desired state stays stopped even if stale heartbeat exists', () => {
++  const shown = npcStatusDisplay({ active: false, desiredActive: false, runningOnLeader: false, workerHeartbeatActive: true });
++  assert.equal(shown.enabled, false);
++  assert.equal(shown.label, 'SIMULATOR STOPPED');
++});
++
++test('malformed socket payload does not replace the last valid tick', () => {
++  const f = hookFixture(); f.emit('riskTerminalUpdate', tick);
++  f.emit('riskTerminalUpdate', null); f.emit('riskTerminalUpdate', 'invalid');
++  assert.equal(f.read(), tick);
++});
++test('disconnect cancels the pending expiry timer', () => {
++  const f = hookFixture(); f.emit('riskTerminalUpdate', tick); f.emit('disconnect');
++  assert.equal(f.timers.size, 0); assert.equal(f.read(), null);
++});
++test('missing status is unavailable rather than confirmed stopped', () => {
++  const derive = loadSource(sourceFor('admin', 'npcRuntimeStatus.js')).deriveNpcRuntimeStatus;
++  assert.equal(derive(null).label, 'STATUS UNAVAILABLE');
++  assert.equal(derive(null).running, false);
++});
++test('enabled flag without a confirmed heartbeat never claims running', () => {
++  assert.equal(npcStatusDisplay({ active: true, mode: 'npc-worker' }).label, 'ENABLED · WORKER NOT RUNNING');
++});

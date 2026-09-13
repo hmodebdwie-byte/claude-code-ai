@@ -1,0 +1,1 @@
+{"id":"c0012","at":"2026-09-13T15:10:08Z","title":"End-of-battle result pop-up off by default (build-time switch)","repo":"frontend","files":["src/core/constants.js","src/screens/Matches.jsx"],"status":"applied","tests":"syntax-checked","notes":"Contracted item S2 ('disable the end-of-battle message entirely'); VITE_BATTLE_RESULT_MODAL=true restores it."}

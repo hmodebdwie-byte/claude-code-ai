@@ -1,0 +1,11 @@
+# product repos are cloned by bootstrap.sh, never vendored here
+backend/
+admin/
+frontend/
+# generated local secrets and runtime state
+env/
+run/pids/
+run/logs/
+run/*.txt
+snapshots/snap-*.json
+node_modules/

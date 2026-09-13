@@ -1,0 +1,331 @@
+<title>TickTrade Workbench Monitor</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Manrope:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Single deliberate dark world: the product's own terminal palette (BUY cyan, SELL magenta, NPC gold). */
+  :root{
+    --bg:#07090d; --bg-2:#0d1118; --bg-3:#131925; --line:#1e2736; --line-2:#2a3547;
+    --ink:#e7ecf3; --ink-2:#9aa7ba; --ink-3:#66738a;
+    --buy:#009FEF; --sell:#FF005C; --good:#18B84E; --bad:#ff3b5c; --warn:#D4AF37; --npc:#D4AF37;
+    --accent:var(--buy);
+    --display:"Sora",system-ui,sans-serif; --body:"Manrope",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --r:6px; color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  html{background:var(--bg)}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.5;padding:0 20px;padding-block:18px 48px;max-width:1440px;margin-inline:auto}
+  a{color:var(--buy)}
+  h1,h2,h3{font-family:var(--display);margin:0;text-wrap:balance;letter-spacing:-.01em}
+  h1{font-size:20px;font-weight:600}
+  h2{font-size:13px;font-weight:600;color:var(--ink-2);text-transform:uppercase;letter-spacing:.08em}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .muted{color:var(--ink-2)} .faint{color:var(--ink-3)}
+  .num{font-variant-numeric:tabular-nums}
+
+  /* ---- header */
+  header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:12px}
+  .mark{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,var(--buy),var(--sell));display:grid;place-items:center;font-family:var(--display);font-weight:700;color:#07090d;font-size:15px}
+  .brand small{display:block;color:var(--ink-2);font-size:12px}
+  .age{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 3px rgba(24,184,78,.18)}
+  .dot.stale{background:var(--warn);box-shadow:0 0 0 3px rgba(212,175,55,.18)}
+  .dot.dead{background:var(--ink-3);box-shadow:none}
+  @media (prefers-reduced-motion:no-preference){ .dot.live{animation:pulse 2s ease-in-out infinite} @keyframes pulse{50%{box-shadow:0 0 0 6px rgba(24,184,78,.06)}} }
+
+  /* ---- phase note */
+  .note{margin-top:14px;padding:12px 14px;border:1px solid var(--line-2);border-left:3px solid var(--warn);background:var(--bg-2);border-radius:var(--r);display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+  .note b{font-family:var(--display);font-weight:600;color:var(--warn);white-space:nowrap}
+  .note[hidden]{display:none}
+
+  /* ---- verdict strip */
+  .verdict{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px;margin-top:16px}
+  .chip{background:var(--bg-2);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-height:64px}
+  .chip .k{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3)}
+  .chip .v{font-family:var(--display);font-size:18px;font-weight:600;line-height:1.2;display:flex;align-items:center;gap:8px}
+  .chip .v i{width:9px;height:9px;border-radius:50%;background:var(--ink-3);flex:none}
+  .chip.good .v i{background:var(--good)} .chip.bad .v i{background:var(--bad)} .chip.warn .v i{background:var(--warn)}
+  .chip.bad{border-color:rgba(255,59,92,.45)} .chip.warn{border-color:rgba(212,175,55,.45)}
+
+  /* ---- grid */
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;margin-top:18px}
+  .card{grid-column:span 12;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;min-width:0}
+  @media (min-width:900px){ .card.c6{grid-column:span 6} .card.c4{grid-column:span 4} .card.c8{grid-column:span 8} .card.c5{grid-column:span 5} .card.c7{grid-column:span 7} }
+  section.card > h2{margin-bottom:10px;display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  section.card > h2 span{font-family:var(--mono);text-transform:none;letter-spacing:0;color:var(--ink-3);font-weight:400}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;font-weight:500;color:var(--ink-3);font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding:4px 8px 6px;border-bottom:1px solid var(--line)}
+  td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  .twrap{overflow-x:auto}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;border:1px solid}
+  .pill.up{color:var(--good);border-color:rgba(24,184,78,.4);background:rgba(24,184,78,.08)}
+  .pill.down{color:var(--bad);border-color:rgba(255,59,92,.4);background:rgba(255,59,92,.08)}
+  .pill.warn{color:var(--warn);border-color:rgba(212,175,55,.4);background:rgba(212,175,55,.08)}
+  .pill.info{color:var(--buy);border-color:rgba(0,159,239,.4);background:rgba(0,159,239,.08)}
+  .pill.dim{color:var(--ink-2);border-color:var(--line-2)}
+  .log{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);white-space:pre-wrap;word-break:break-word;max-width:100%}
+  .err{color:var(--bad)}
+  details summary{cursor:pointer;color:var(--ink-2);font-size:12px} details summary:hover{color:var(--ink)}
+  details[open] summary{margin-bottom:6px}
+
+  /* ---- bars */
+  .bars{display:flex;flex-direction:column;gap:6px}
+  .bar{display:grid;grid-template-columns:minmax(120px,180px) 1fr 64px;gap:10px;align-items:center;font-size:12px}
+  .bar .name{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bar .track{height:10px;background:var(--bg-3);border-radius:3px;overflow:hidden}
+  .bar .fill{height:100%;background:linear-gradient(90deg,var(--buy),#5fc9ff);border-radius:3px;min-width:2px}
+  .bar .rate{text-align:right;font-family:var(--mono);color:var(--ink-2)}
+  .empty{padding:18px 6px;color:var(--ink-3);font-size:13px;text-align:center;border:1px dashed var(--line-2);border-radius:var(--r)}
+
+  /* ---- stat tiles */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+  .tile{background:var(--bg-3);border-radius:var(--r);padding:8px 10px}
+  .tile .k{font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em}
+  .tile .v{font-family:var(--mono);font-size:17px;font-weight:500}
+
+  /* ---- browser */
+  .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+  .shot{background:var(--bg-3);border-radius:var(--r);overflow:hidden;border:1px solid var(--line)}
+  .shot .top{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;font-size:12px;border-bottom:1px solid var(--line)}
+  .shot img{display:block;width:100%;max-width:100%;height:auto;background:#000;cursor:zoom-in}
+  .shot .ph{aspect-ratio:16/10;max-width:100%;display:grid;place-items:center;color:var(--ink-3);font-size:12px}
+  .shot ul{margin:0;padding:8px 10px 10px 24px;font-size:12px;color:var(--ink-2)} .shot li{margin:2px 0}
+  .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.85);display:grid;place-items:center;padding:24px;z-index:9;cursor:zoom-out}
+  .lightbox img{max-width:100%;max-height:100%;border:1px solid var(--line-2)}
+
+  /* ---- change log */
+  .timeline{display:flex;flex-direction:column;gap:10px}
+  .change{display:grid;grid-template-columns:110px 1fr;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .change:last-child{border-bottom:0}
+  .change .when{font-family:var(--mono);font-size:11px;color:var(--ink-3);padding-top:3px}
+  .change .title{font-weight:600}
+  .change .files{font-family:var(--mono);font-size:11px;color:var(--ink-2);margin-top:4px;word-break:break-all}
+  .change .meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .change p{margin:6px 0 0;color:var(--ink-2);font-size:13px}
+  @media (max-width:520px){ .change{grid-template-columns:1fr} .bar{grid-template-columns:100px 1fr 56px} }
+
+  /* ---- history sparkline */
+  .hist{display:flex;gap:2px;align-items:flex-end;height:26px}
+  .hist i{flex:1;min-width:3px;max-width:10px;border-radius:2px 2px 0 0;background:var(--ink-3);height:40%}
+  .hist i.ok{background:var(--good);height:100%} .hist i.warn{background:var(--warn);height:70%} .hist i.bad{background:var(--bad);height:100%}
+  footer{margin-top:22px;color:var(--ink-3);font-size:12px;font-family:var(--mono);display:flex;flex-wrap:wrap;gap:6px 18px}
+  :focus-visible{outline:2px solid var(--buy);outline-offset:2px}
+</style>
+
+<header>
+  <div class="brand">
+    <div class="mark">TT</div>
+    <div>
+      <h1>TickTrade Workbench Monitor</h1>
+      <small>Front end + back end of the sandbox stack · rebuilt and re-checked after every change</small>
+    </div>
+  </div>
+  <div class="age"><span class="dot dead" id="dot"></span><span id="age">no snapshot yet</span><span class="faint" id="took"></span></div>
+</header>
+
+<div class="note" id="note" hidden><b id="note-phase"></b><span id="note-text"></span><span class="faint mono" id="note-at"></span></div>
+
+<div class="verdict" id="verdict"></div>
+
+<div class="grid">
+  <section class="card c7"><h2>Services <span id="svc-sub"></span></h2><div class="twrap" id="services"><div class="empty">Waiting for the first snapshot from the sandbox.</div></div></section>
+  <section class="card c5"><h2>Event flow · Redis pub/sub <span id="ev-sub"></span></h2><div id="events"><div class="empty">No events sampled yet.</div></div></section>
+
+  <section class="card c4"><h2>Tests <span id="tests-sub"></span></h2><div id="tests"><div class="empty">No test run recorded.</div></div></section>
+  <section class="card c4"><h2>Queues · BullMQ</h2><div id="queues"><div class="empty">No queues discovered.</div></div></section>
+  <section class="card c4"><h2>Database <span id="db-sub"></span></h2><div id="db"><div class="empty">Database not probed yet.</div></div></section>
+
+  <section class="card"><h2>Browser checks <span id="br-sub"></span></h2><div class="shots" id="browser"><div class="empty">No page loads recorded.</div></div></section>
+
+  <section class="card"><h2>Browser smoke · logged-in flows <span id="sm-sub"></span></h2><div class="twrap" id="smoke"><div class="empty">No smoke run recorded. <span class="mono">node tools/browser-smoke.cjs</span> logs into the trading app and the admin and exercises the patched flows.</div></div></section>
+
+  <section class="card c7"><h2>Change log <span id="ch-sub"></span></h2><div class="timeline" id="changes"><div class="empty">No changes applied yet. Each fix, upgrade or new tool lands here with its test result.</div></div></section>
+  <section class="card c5">
+    <h2>Workbench state</h2>
+    <div id="repos"></div>
+    <h2 style="margin-top:14px">HTTP checks</h2>
+    <div class="twrap" id="http"></div>
+    <h2 style="margin-top:14px">Snapshot history</h2>
+    <div class="hist" id="hist"></div>
+  </section>
+</div>
+
+<footer><span id="f-id"></span><span id="f-mode"></span><span>Ports: app 18771 · admin 18772 · api 18773</span></footer>
+
+<script>
+(function(){
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const fmtN = (n) => (n === null || n === undefined) ? "—" : Number(n).toLocaleString();
+  let latest = null, shots = {}, changes = [], history = [], lastTakenAt = null;
+
+  // ---------- relative age ticker
+  function tickAge(){
+    if(!lastTakenAt){ $("age").textContent = "no snapshot yet"; $("dot").className = "dot dead"; return; }
+    const s = Math.max(0, Math.round((Date.now() - new Date(lastTakenAt).getTime())/1000));
+    const txt = s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s/60)} min ago` : s < 86400 ? `${Math.floor(s/3600)} h ago` : `${Math.floor(s/86400)} d ago`;
+    $("age").textContent = `snapshot ${txt} · ${new Date(lastTakenAt).toLocaleString()}`;
+    $("dot").className = "dot " + (s < 900 ? "live" : s < 7200 ? "stale" : "dead");
+  }
+  setInterval(tickAge, 1000);
+
+  // ---------- verdict strip
+  function renderVerdict(v, snap){
+    const items = [
+      ["Backend API", v.backend, v.backend === "up" ? "good" : "bad"],
+      ["Trading app", v.frontend, v.frontend === "up" ? "good" : "bad"],
+      ["Admin app", v.admin, v.admin === "up" ? "good" : "bad"],
+      ["Services", v.services, (v.services||"").startsWith("7/") ? "good" : (v.services||"0/").startsWith("0/") ? "bad" : "warn"],
+      ["Redis", v.redis, v.redis === "up" ? "good" : "bad"],
+      ["Postgres", v.db, v.db === "up" ? "good" : "bad"],
+      ["Events / s", fmtN(v.eventsPerSec), v.eventsPerSec > 0 ? "good" : "warn"],
+      ["Failing tests", fmtN(v.testsFailed), v.testsFailed === 0 && (snap.tests||[]).length ? "good" : v.testsFailed > 0 ? "bad" : "warn"],
+      ["Browser errors", fmtN(v.browserErrors), v.browserErrors === 0 && (snap.browser?.pages||[]).length ? "good" : v.browserErrors > 0 ? "bad" : "warn"],
+      ["Unauth leaks", fmtN(v.unauthLeaks), v.unauthLeaks === 0 ? "good" : "bad"],
+      ["Smoke checks", snap.smoke ? `${fmtN(snap.smoke.pass)}/${fmtN(snap.smoke.pass + snap.smoke.fail)}` : "—", !snap.smoke ? "warn" : snap.smoke.fail === 0 ? "good" : "bad"],
+    ];
+    $("verdict").innerHTML = items.map(([k,val,cls]) => `<div class="chip ${cls}"><span class="k">${esc(k)}</span><span class="v"><i></i>${esc(val)}</span></div>`).join("");
+  }
+
+  // ---------- services
+  function renderServices(list){
+    if(!list || !list.length){ return; }
+    const up = list.filter(s => s.up).length;
+    $("svc-sub").textContent = `${up}/${list.length} running`;
+    $("services").innerHTML = `<table><thead><tr><th>Service</th><th>State</th><th>PID</th><th>RSS</th><th>Last log line</th></tr></thead><tbody>` +
+      list.map(s => `<tr><td class="mono">${esc(s.name)}</td><td><span class="pill ${s.up?"up":"down"}">${s.up?"up":"down"}</span></td><td class="mono">${s.pid ?? "—"}</td><td class="mono">${s.rssMb ? s.rssMb+" MB" : "—"}</td>
+        <td><div class="log">${esc((s.lastLines||[]).slice(-1)[0] || "")}</div>${(s.recentErrors||[]).length ? `<details><summary class="err">${s.recentErrors.length} recent error line${s.recentErrors.length>1?"s":""}</summary><div class="log err">${esc(s.recentErrors.join("\n"))}</div></details>` : ""}</td></tr>`).join("") + `</tbody></table>`;
+  }
+
+  // ---------- events
+  function renderEvents(r){
+    if(!r || !r.ok){ $("events").innerHTML = `<div class="empty">Redis unreachable.</div>`; return; }
+    const secs = r.sampleSeconds || 1;
+    const entries = Object.entries(r.channels||{}).sort((a,b)=>b[1]-a[1]);
+    $("ev-sub").textContent = `${secs}s sample · ${entries.reduce((a,[,n])=>a+n,0)} msgs · ${fmtN(r.dbsize)} keys`;
+    if(!entries.length){ $("events").innerHTML = `<div class="empty">No pub/sub traffic during the ${secs}s sample — engine idle or not running.</div>`; return; }
+    const max = entries[0][1];
+    $("events").innerHTML = `<div class="bars">` + entries.slice(0,14).map(([ch,n]) => `<div class="bar"><span class="name" title="${esc(ch)}">${esc(ch)}</span><span class="track"><span class="fill" style="width:${Math.max(2,Math.round(n/max*100))}%"></span></span><span class="rate">${(n/secs).toFixed(1)}/s</span></div>`).join("") + `</div>` +
+      ((r.samples||[]).length ? `<details style="margin-top:10px"><summary>Sample payloads</summary><div class="log">${esc(r.samples.map(s=>`${s.channel}\n  ${s.payload}`).join("\n"))}</div></details>` : "") +
+      (Object.keys(r.keys||{}).length ? `<details style="margin-top:6px"><summary>Leader / flag keys</summary><div class="log">${esc(Object.entries(r.keys).map(([k,v])=>`${k} = ${v ?? "(nil)"}`).join("\n"))}</div></details>` : "");
+  }
+
+  // ---------- tests
+  function renderTests(tests, failing){
+    if(!tests || !tests.length) return;
+    const total = tests.reduce((a,t)=>a+(t.total||0),0), failed = tests.reduce((a,t)=>a+(t.failed||0),0);
+    $("tests-sub").textContent = `${fmtN(total - failed)}/${fmtN(total)} passing`;
+    $("tests").innerHTML = `<div class="tiles">` + tests.map(t => `<div class="tile"><div class="k">${esc(t.name)}</div><div class="v" style="color:${t.unparsed?"var(--ink-2)":t.failed?"var(--bad)":"var(--good)"}">${t.unparsed ? "?" : `${fmtN(t.passed)}<span class="faint">/${fmtN(t.total)}</span>`}</div><div class="faint mono" style="font-size:10px">${esc(new Date(t.at).toLocaleString())}</div></div>`).join("") + `</div>` +
+      ((failing||[]).length ? `<details style="margin-top:10px"><summary class="err">${failing.length} failing assertion${failing.length>1?"s":""}</summary><div class="log">${esc(failing.join("\n"))}</div></details>` : "");
+  }
+
+  // ---------- queues
+  function renderQueues(r){
+    const q = r && r.queues ? Object.entries(r.queues) : [];
+    if(!q.length) return;
+    $("queues").innerHTML = q.map(([name,c]) => `<div style="margin-bottom:10px"><div class="mono" style="font-size:12px;margin-bottom:4px">${esc(name)}</div><div class="tiles">` +
+      [["waiting",c.waiting,c.waiting>50?"var(--warn)":""],["active",c.active,""],["delayed",c.delayed,""],["completed",c.completed,"var(--good)"],["failed",c.failed,c.failed?"var(--bad)":""]].map(([k,v,col])=>`<div class="tile"><div class="k">${k}</div><div class="v" style="${col?`color:${col}`:""}">${fmtN(v)}</div></div>`).join("") + `</div></div>`).join("");
+  }
+
+  // ---------- db
+  function renderDb(db){
+    if(!db || !db.ok){ $("db").innerHTML = `<div class="empty">Postgres unreachable.</div>`; return; }
+    $("db-sub").textContent = `${fmtN(db.tables)} tables · ${fmtN(db.migrations)} migrations`;
+    const c = db.counts || {};
+    const pretty = {User:"users",battles:"battles",battle_participants:"stakes",ledger:"ledger rows",npc_traders:"NPC traders",npc_trades:"NPC trades",WithdrawalRequest:"withdrawals",AdminAuditLog:"audit log",risk_terminal_alerts:"risk alerts",price_ticks:"price ticks",Candle:"candles",SystemSetting:"settings",IdempotencyRecord:"idempotency"};
+    let html = `<div class="tiles">` + Object.entries(c).map(([k,v])=>`<div class="tile"><div class="k">${esc(pretty[k]||k)}</div><div class="v">${fmtN(v)}</div></div>`).join("") + `</div>`;
+    if(db.battlesLastHour !== undefined) html += `<div class="muted" style="margin-top:8px;font-size:12px">Last hour: <b class="mono">${fmtN(db.battlesLastHour)}</b> battles · <b class="mono">${fmtN(db.stakesLastHour)}</b> stakes${db.npc?` · NPC active <b class="mono">${fmtN(db.npc.active)}/${fmtN(db.npc.total)}</b>`:""}</div>`;
+    if(db.latestBattle) html += `<details style="margin-top:8px"><summary>Latest battle</summary><div class="log">${esc(JSON.stringify(db.latestBattle,null,1))}</div></details>`;
+    if(!Object.keys(c).length) html = `<div class="empty">Connected, but no application tables yet — migrations have not run.</div>`;
+    $("db").innerHTML = html;
+  }
+
+  // ---------- browser
+  function renderBrowser(br){
+    const pages = (br && br.pages) || [];
+    if(br && br.error){ $("browser").innerHTML = `<div class="empty">Browser check failed: ${esc(br.error)}</div>`; return; }
+    if(!pages.length){ if(br && br.skipped) $("browser").innerHTML = `<div class="empty">Browser checks skipped for this snapshot.</div>`; return; }
+    const errs = pages.reduce((a,p)=>a+(p.consoleErrors||[]).length+(p.pageErrors||[]).length,0);
+    $("br-sub").textContent = `${pages.length} page loads · ${errs} error${errs===1?"":"s"}`;
+    $("browser").innerHTML = pages.map(p => {
+      const shot = shots[p.label];
+      const bad = (p.consoleErrors||[]).length + (p.pageErrors||[]).length;
+      return `<div class="shot"><div class="top"><span><b>${esc(p.label)}</b> <span class="faint mono">${p.viewport?.width}×${p.viewport?.height}</span></span><span><span class="pill ${p.status===200?"up":"down"}">${p.status||"ERR"}</span> <span class="faint mono">${p.ms} ms</span></span></div>` +
+        (shot && shot.dataUrl ? `<img src="${shot.dataUrl}" alt="${esc(p.label)} screenshot" data-zoom="${esc(p.label)}">` : `<div class="ph">no screenshot</div>`) +
+        `<ul>${p.title ? `<li class="muted">title: ${esc(p.title)}</li>` : ""}${p.horizontalOverflow ? `<li class="err">horizontal overflow</li>` : ""}${(p.pageErrors||[]).map(e=>`<li class="err">${esc(e)}</li>`).join("")}${(p.consoleErrors||[]).map(e=>`<li class="err">${esc(e)}</li>`).join("")}${(p.failedRequests||[]).slice(0,4).map(e=>`<li class="faint">${esc(e)}</li>`).join("")}${!bad ? `<li style="color:var(--good)">no console or page errors</li>` : ""}</ul></div>`;
+    }).join("");
+    document.querySelectorAll("img[data-zoom]").forEach(img => img.addEventListener("click", () => {
+      const lb = document.createElement("div"); lb.className = "lightbox"; lb.innerHTML = `<img src="${img.src}" alt="">`; lb.addEventListener("click", () => lb.remove()); document.body.appendChild(lb);
+    }));
+  }
+
+  // ---------- browser smoke (logged-in flows)
+  function renderSmoke(sm){
+    if(!sm || !sm.checks) return;
+    $("sm-sub").textContent = `${fmtN(sm.pass)}/${fmtN(sm.pass + sm.fail)} passed · ${new Date(sm.at).toLocaleString()}`;
+    $("smoke").innerHTML = `<table><thead><tr><th>Check</th><th>Result</th><th>Detail</th></tr></thead><tbody>` +
+      sm.checks.map(c => `<tr><td>${esc(c.name)}</td><td><span class="pill ${c.pass?"up":"down"}">${c.pass?"pass":"fail"}</span></td><td class="log">${esc(c.detail||"")}</td></tr>`).join("") + `</tbody></table>`;
+  }
+
+  // ---------- change log
+  function renderChanges(list){
+    if(!list || !list.length) return;
+    $("ch-sub").textContent = `${list.length} entr${list.length===1?"y":"ies"}`;
+    const cls = (s) => ({applied:"info",verified:"up",proposed:"dim",failed:"down","rolled back":"warn",blocked:"warn"})[s] || "dim";
+    $("changes").innerHTML = list.slice().sort((a,b)=>String(b.at).localeCompare(String(a.at))).map(c => `<div class="change"><div class="when">${esc(new Date(c.at).toLocaleString())}</div><div>
+      <div class="title">${esc(c.title)}</div>
+      ${c.files && c.files.length ? `<div class="files">${esc(c.files.join("  ·  "))}</div>` : ""}
+      ${c.notes ? `<p>${esc(c.notes)}</p>` : ""}
+      <div class="meta"><span class="pill ${cls(c.status)}">${esc(c.status||"proposed")}</span>${c.repo?`<span class="pill dim">${esc(c.repo)}</span>`:""}${c.tests?`<span class="pill ${/fail/i.test(c.tests)&&!/0 fail/.test(c.tests)?"down":"up"}">${esc(c.tests)}</span>`:""}${c.id?`<span class="faint mono" style="font-size:11px">${esc(c.id)}</span>`:""}</div>
+    </div></div>`).join("");
+  }
+
+  // ---------- workbench / http / history
+  function renderRepos(snap){
+    const r = snap.repos || {};
+    $("repos").innerHTML = `<div class="twrap"><table><thead><tr><th>Repo</th><th>Head</th><th>Commits</th><th>Dirty</th></tr></thead><tbody>` +
+      Object.entries(r).map(([k,v]) => `<tr><td>${esc(k)}</td><td class="mono">${esc(v.commit||"—")} <span class="faint">${esc((v.subject||"").slice(0,48))}</span></td><td class="mono">${fmtN(v.commits)}</td><td class="mono" style="${v.dirty?"color:var(--warn)":""}">${fmtN(v.dirty)}</td></tr>`).join("") +
+      `</tbody></table></div><div class="faint mono" style="font-size:11px;margin-top:6px">last build: ${esc(snap.lastBuild || "never")}</div>`;
+  }
+  function renderHttp(h){
+    if(!h) return;
+    const rows = [["API /", h.apiRoot],["API /docs", h.apiDocs],["Trading app /", h.frontend],["Admin /", h.admin]].concat((h.adminUnauth||[]).map(c => ["unauth " + c.url.replace(/^https?:\/\/[^/]+/, ""), c]));
+    $("http").innerHTML = `<table><thead><tr><th>Check</th><th>Status</th><th>ms</th></tr></thead><tbody>` + rows.map(([k,c]) => {
+      const unauth = k.startsWith("unauth");
+      const ok = unauth ? (c.status === 401 || c.status === 403) : c.status === 200;
+      return `<tr><td class="mono" style="font-size:12px">${esc(k)}</td><td><span class="pill ${ok?"up":c.status===0?"dim":"down"}">${c.status || "ERR"}</span></td><td class="mono">${c.ms}</td></tr>`; }).join("") + `</tbody></table>`;
+  }
+  function renderHistory(list){
+    if(!list.length){ $("hist").innerHTML = ""; return; }
+    $("hist").innerHTML = list.slice(-60).map(h => { const v = h.verdict||{}; const cls = v.backend!=="up"||v.frontend!=="up"||v.admin!=="up" ? "bad" : (v.testsFailed>0||v.browserErrors>0) ? "warn" : "ok"; return `<i class="${cls}" title="${esc(new Date(h.takenAt).toLocaleString())}"></i>`; }).join("");
+  }
+
+  function renderAll(){
+    if(!latest) return;
+    lastTakenAt = latest.takenAt; tickAge();
+    $("took").textContent = latest.durationMs ? `· probe ${(latest.durationMs/1000).toFixed(1)}s` : "";
+    renderVerdict(latest.verdict||{}, latest);
+    renderServices(latest.services); renderEvents(latest.redis); renderTests(latest.tests, latest.failingTests);
+    renderQueues(latest.redis); renderDb(latest.db); renderBrowser(latest.browser); renderSmoke(latest.smoke); renderRepos(latest); renderHttp(latest.http);
+    $("f-id").textContent = latest.id || "";
+  }
+  function renderNote(n){
+    if(!n || !n.note){ $("note").hidden = true; return; }
+    $("note").hidden = false; $("note-phase").textContent = n.phase || "Status"; $("note-text").textContent = n.note; $("note-at").textContent = n.updatedAt ? new Date(n.updatedAt).toLocaleString() : "";
+  }
+
+  // ---------- live data
+  (async () => {
+    const db = window.claude && window.claude.use ? await window.claude.use("db") : null;
+    if(!db){ $("f-mode").textContent = "static view — live data unavailable in this context"; return; }
+    $("f-mode").textContent = "live · updates when a new snapshot is pushed";
+    db.doc("monitor/latest").onSnapshot(s => { if(s.exists){ latest = s.data(); renderAll(); } }, e => console.error("monitor/latest", e));
+    db.doc("meta/status").onSnapshot(s => renderNote(s.exists ? s.data() : null), e => console.error("meta/status", e));
+    db.collection("shots").onSnapshot(q => { shots = {}; q.docs.forEach(d => { shots[d.id] = d.data(); }); if(latest) renderBrowser(latest.browser); }, e => console.error("shots", e));
+    db.collection("changes").orderBy("at","desc").limit(60).onSnapshot(q => { changes = q.docs.map(d => ({ id: d.id, ...d.data() })); renderChanges(changes); }, e => console.error("changes", e));
+    db.collection("history").orderBy("takenAt","desc").limit(60).onSnapshot(q => { history = q.docs.map(d => d.data()).reverse(); renderHistory(history); }, e => console.error("history", e));
+  })();
+})();
+</script>

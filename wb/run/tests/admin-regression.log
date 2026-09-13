@@ -1,0 +1,106 @@
+TAP version 13
+# Subtest: matching connected tick remains primary
+ok 1 - matching connected tick remains primary
+  ---
+  duration_ms: 68.847196
+  type: 'test'
+  ...
+# Subtest: disconnect lets refreshed REST replace last matching socket tick
+ok 2 - disconnect lets refreshed REST replace last matching socket tick
+  ---
+  duration_ms: 11.402217
+  type: 'test'
+  ...
+# Subtest: REST no-active-battle does not resurrect old socket battle
+ok 3 - REST no-active-battle does not resurrect old socket battle
+  ---
+  duration_ms: 8.760446
+  type: 'test'
+  ...
+# Subtest: new REST battle never receives a previous battle tick
+ok 4 - new REST battle never receives a previous battle tick
+  ---
+  duration_ms: 5.430504
+  type: 'test'
+  ...
+# Subtest: socket disconnect clears stale stored tick
+ok 5 - socket disconnect clears stale stored tick
+  ---
+  duration_ms: 52.465725
+  type: 'test'
+  ...
+# Subtest: silent tick channel expires within five seconds so REST fallback can render
+ok 6 - silent tick channel expires within five seconds so REST fallback can render
+  ---
+  duration_ms: 5.372251
+  type: 'test'
+  ...
+# Subtest: each new tick replaces old expiry; current tick is not cleared by a prior timer
+ok 7 - each new tick replaces old expiry; current tick is not cleared by a prior timer
+  ---
+  duration_ms: 5.176921
+  type: 'test'
+  ...
+# Subtest: hook cleanup removes listeners and expiry work
+ok 8 - hook cleanup removes listeners and expiry work
+  ---
+  duration_ms: 4.646253
+  type: 'test'
+  ...
+# Subtest: enabled simulator with absent NPC worker does not display ACTIVE
+ok 9 - enabled simulator with absent NPC worker does not display ACTIVE
+  ---
+  duration_ms: 57.269065
+  type: 'test'
+  ...
+# Subtest: enabled engine without heartbeat does not display ACTIVE
+ok 10 - enabled engine without heartbeat does not display ACTIVE
+  ---
+  duration_ms: 29.072625
+  type: 'test'
+  ...
+# Subtest: confirmed leader activity is shown as running
+ok 11 - confirmed leader activity is shown as running
+  ---
+  duration_ms: 23.066498
+  type: 'test'
+  ...
+# Subtest: disabled desired state stays stopped even if stale heartbeat exists
+ok 12 - disabled desired state stays stopped even if stale heartbeat exists
+  ---
+  duration_ms: 23.30386
+  type: 'test'
+  ...
+# Subtest: malformed socket payload does not replace the last valid tick
+ok 13 - malformed socket payload does not replace the last valid tick
+  ---
+  duration_ms: 4.193334
+  type: 'test'
+  ...
+# Subtest: disconnect cancels the pending expiry timer
+ok 14 - disconnect cancels the pending expiry timer
+  ---
+  duration_ms: 5.424237
+  type: 'test'
+  ...
+# Subtest: missing status is unavailable rather than confirmed stopped
+ok 15 - missing status is unavailable rather than confirmed stopped
+  ---
+  duration_ms: 2.530904
+  type: 'test'
+  ...
+# Subtest: enabled flag without a confirmed heartbeat never claims running
+ok 16 - enabled flag without a confirmed heartbeat never claims running
+  ---
+  duration_ms: 27.11046
+  type: 'test'
+  ...
+1..16
+# tests 16
+# suites 0
+# pass 16
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 474.04555

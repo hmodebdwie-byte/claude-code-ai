@@ -1,0 +1,1 @@
+{"takenAt":"2026-09-13T15:57:28.956Z","verdict":{"backend":"up","frontend":"up","admin":"up","services":"7/7","redis":"up","db":"up","eventsPerSec":2.8,"testsFailed":16,"browserErrors":0,"unauthLeaks":0,"smokeFailed":0}}

@@ -1,0 +1,77 @@
+{
+  "at": "2026-09-13T15:55:44.372Z",
+  "checks": [
+    {
+      "name": "frontend: demo login lands on the arena",
+      "pass": true,
+      "detail": "http://127.0.0.1:18771/"
+    },
+    {
+      "name": "frontend: JWT stored",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "frontend: BUY opens the confirmation sheet when the setting is on",
+      "pass": true,
+      "detail": "Confirm BUY Your stake joins the Buy pool for this round and stays committed until settlement. Side BUY Stake $10.00 Balance after $99,990.00 Cancel Place BUY ·"
+    },
+    {
+      "name": "frontend: Cancel closes the sheet without placing an order",
+      "pass": true,
+      "detail": "demo stakes before=0 after=0"
+    },
+    {
+      "name": "frontend: chat shows the sender name above the message",
+      "pass": true,
+      "detail": "2 messages rendered, nameAbove=true"
+    },
+    {
+      "name": "frontend: chat send clears the input and drops focus (keyboard dismissed)",
+      "pass": true,
+      "detail": "value=\"\" focused=false"
+    },
+    {
+      "name": "frontend: no page errors",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "admin: admin login reaches /admin and stays (no redirect loop)",
+      "pass": true,
+      "detail": "4 navigations: /login → /login → /admin → /admin"
+    },
+    {
+      "name": "admin: dashboard shell renders (lazy chunk + CSS loaded)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "admin: \"Risk Management Terminal\" renders",
+      "pass": true,
+      "detail": "📈 Dashboard 👥 User Management ▾ 💰 Finance ▾ 🛡️ Risk & Security ▾ ⚠️ Risk breaches 🔒 Risk Management Terminal 🎯 Pri"
+    },
+    {
+      "name": "admin: \"NPC Simulator\" renders",
+      "pass": true,
+      "detail": "SIMULATOR RUNNING"
+    },
+    {
+      "name": "admin: no page errors",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "admin: a USER-role login lands on the 403 page instead of looping between /login and /admin",
+      "pass": true,
+      "detail": "6 navigations: /login → /login → /admin → /admin → /unauthorized → /unauthorized"
+    },
+    {
+      "name": "admin: 'Sign in with another account' clears the session and returns to /login (stays there)",
+      "pass": true,
+      "detail": "path=/login token left=false; navigations=7"
+    }
+  ],
+  "pass": 14,
+  "fail": 0
+}

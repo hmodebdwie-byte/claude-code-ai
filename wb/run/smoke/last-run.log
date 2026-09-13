@@ -1,0 +1,16 @@
+ok   frontend: demo login lands on the arena — http://127.0.0.1:18771/
+ok   frontend: JWT stored
+ok   frontend: BUY opens the confirmation sheet when the setting is on — Confirm BUY Your stake joins the Buy pool for this round and stays committed until settlement. Side BUY Stake $10.00 Balance after $99,990.00 Cancel Place BUY ·
+ok   frontend: Cancel closes the sheet without placing an order — demo stakes before=0 after=0
+ok   frontend: chat shows the sender name above the message — 2 messages rendered, nameAbove=true
+ok   frontend: chat send clears the input and drops focus (keyboard dismissed) — value="" focused=false
+ok   frontend: no page errors
+ok   admin: admin login reaches /admin and stays (no redirect loop) — 4 navigations: /login → /login → /admin → /admin
+ok   admin: dashboard shell renders (lazy chunk + CSS loaded)
+ok   admin: "Risk Management Terminal" renders — 📈 Dashboard 👥 User Management ▾ 💰 Finance ▾ 🛡️ Risk & Security ▾ ⚠️ Risk breaches 🔒 Risk Management Terminal 🎯 Pri
+ok   admin: "NPC Simulator" renders — SIMULATOR RUNNING
+ok   admin: no page errors
+ok   admin: a USER-role login lands on the 403 page instead of looping between /login and /admin — 6 navigations: /login → /login → /admin → /admin → /unauthorized → /unauthorized
+ok   admin: 'Sign in with another account' clears the session and returns to /login (stays there) — path=/login token left=false; navigations=7
+
+14/14 checks passed — screenshots in /home/claude/wb/run/smoke

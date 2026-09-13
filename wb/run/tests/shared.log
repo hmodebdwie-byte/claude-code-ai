@@ -1,0 +1,1199 @@
+TAP version 13
+# Subtest: case 1: buy winning, user on buy → hedge sell diff * 1.02
+ok 1 - case 1: buy winning, user on buy → hedge sell diff * 1.02
+  ---
+  duration_ms: 0.781253
+  type: 'test'
+  ...
+# Subtest: case 2: buy winning after user buy, small diff
+ok 2 - case 2: buy winning after user buy, small diff
+  ---
+  duration_ms: 0.121619
+  type: 'test'
+  ...
+# Subtest: skip when trigger not on win side
+ok 3 - skip when trigger not on win side
+  ---
+  duration_ms: 0.131474
+  type: 'test'
+  ...
+# Subtest: skip on tie
+ok 4 - skip on tie
+  ---
+  duration_ms: 0.138543
+  type: 'test'
+  ...
+# Subtest: isInLastMomentHedgeWindow: inside band above freeze
+not ok 5 - isInLastMomentHedgeWindow: inside band above freeze
+  ---
+  duration_ms: 3.580012
+  type: 'test'
+  location: '/home/claude/wb/backend/packages/shared/src/battle/last-moment-company-hedge.spec.ts:43:25'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    true !== false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: true
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/packages/shared/src/battle/last-moment-company-hedge.spec.ts:54:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: predictPotsAfterPendingOrder
+ok 6 - predictPotsAfterPendingOrder
+  ---
+  duration_ms: 0.149682
+  type: 'test'
+  ...
+# Subtest: computeLastMomentHedgeBeforePendingOrder: window + algo
+not ok 7 - computeLastMomentHedgeBeforePendingOrder: window + algo
+  ---
+  duration_ms: 1.910298
+  type: 'test'
+  location: '/home/claude/wb/backend/packages/shared/src/battle/last-moment-company-hedge.spec.ts:54:25'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    30 !== 252
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 252
+  actual: 30
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/packages/shared/src/battle/last-moment-company-hedge.spec.ts:73:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: computeLastMomentHedgeBeforePendingOrder: outside window
+not ok 8 - computeLastMomentHedgeBeforePendingOrder: outside window
+  ---
+  duration_ms: 0.893495
+  type: 'test'
+  location: '/home/claude/wb/backend/packages/shared/src/battle/last-moment-company-hedge.spec.ts:66:25'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+    
+    + {
+    +   amount: 30,
+    +   side: 'SELL'
+    + }
+    - null
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: ~
+  actual:
+    side: 'SELL'
+    amount: 30
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/packages/shared/src/battle/last-moment-company-hedge.spec.ts:88:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: replayBattlePricing does not mutate the module-level pipImpactConfig global
+ok 9 - replayBattlePricing does not mutate the module-level pipImpactConfig global
+  ---
+  duration_ms: 2.004118
+  type: 'test'
+  ...
+# Subtest: replayBattlePricing is deterministic for the same input regardless of global state at call time
+ok 10 - replayBattlePricing is deterministic for the same input regardless of global state at call time
+  ---
+  duration_ms: 0.304136
+  type: 'test'
+  ...
+# Subtest: two back-to-back replays with very different multipliers over many trades produce independent, differing results (no cross-call leakage)
+ok 11 - two back-to-back replays with very different multipliers over many trades produce independent, differing results (no cross-call leakage)
+  ---
+  duration_ms: 0.665006
+  type: 'test'
+  ...
+# Subtest: explicit pipImpactConfig produces identical output to the global-based path when values match
+ok 12 - explicit pipImpactConfig produces identical output to the global-based path when values match
+  ---
+  duration_ms: 1.350035
+  type: 'test'
+  ...
+# Subtest: explicit pipImpactConfig overrides whatever the global is currently set to
+ok 13 - explicit pipImpactConfig overrides whatever the global is currently set to
+  ---
+  duration_ms: 0.182862
+  type: 'test'
+  ...
+# Subtest: omitting pipImpactConfig still falls back to the module-level runtime config (live-trading path unchanged)
+ok 14 - omitting pipImpactConfig still falls back to the module-level runtime config (live-trading path unchanged)
+  ---
+  duration_ms: 0.433594
+  type: 'test'
+  ...
+# Subtest: a SELL landing on a buy-only book moves price down, not up (pre-trade pot regression)
+ok 15 - a SELL landing on a buy-only book moves price down, not up (pre-trade pot regression)
+  ---
+  duration_ms: 0.167919
+  type: 'test'
+  ...
+# Subtest: same-size BUY and SELL landing on an empty book move price by equal magnitude in opposite directions
+ok 16 - same-size BUY and SELL landing on an empty book move price by equal magnitude in opposite directions
+  ---
+  duration_ms: 0.141647
+  type: 'test'
+  ...
+# Subtest: a real-user trade is pure deterministic formula: identical amount/side/config always produces identical pips, regardless of book state
+ok 17 - a real-user trade is pure deterministic formula: identical amount/side/config always produces identical pips, regardless of book state
+  ---
+  duration_ms: 0.358333
+  type: 'test'
+  ...
+# Subtest: a real-user trade produces the exact same pip count and raw price delta at any round price level (Preview must equal Execution)
+ok 18 - a real-user trade produces the exact same pip count and raw price delta at any round price level (Preview must equal Execution)
+  ---
+  duration_ms: 3.53473
+  type: 'test'
+  ...
+# Subtest: an NPC trade is NOT deterministic-only: it still varies with book/pressure state, unlike a real-user trade
+ok 19 - an NPC trade is NOT deterministic-only: it still varies with book/pressure state, unlike a real-user trade
+  ---
+  duration_ms: 0.510147
+  type: 'test'
+  ...
+# Subtest: EMAIL_EVENT_NAMES has no duplicate values
+ok 20 - EMAIL_EVENT_NAMES has no duplicate values
+  ---
+  duration_ms: 0.591365
+  type: 'test'
+  ...
+# Subtest: EMAIL_EVENT_NAMES matches Object.values(EMAIL_EVENTS)
+ok 21 - EMAIL_EVENT_NAMES matches Object.values(EMAIL_EVENTS)
+  ---
+  duration_ms: 1.061744
+  type: 'test'
+  ...
+# Subtest: every event name is a non-empty dot-namespaced string
+ok 22 - every event name is a non-empty dot-namespaced string
+  ---
+  duration_ms: 0.320399
+  type: 'test'
+  ...
+# Subtest: SMA: null before period values seen
+ok 23 - SMA: null before period values seen
+  ---
+  duration_ms: 0.837764
+  type: 'test'
+  ...
+# Subtest: SMA: correct average once warmed
+ok 24 - SMA: correct average once warmed
+  ---
+  duration_ms: 0.129562
+  type: 'test'
+  ...
+# Subtest: SMA: slides — old values drop off
+ok 25 - SMA: slides — old values drop off
+  ---
+  duration_ms: 0.090858
+  type: 'test'
+  ...
+# Subtest: EMA: first value seeds the state
+ok 26 - EMA: first value seeds the state
+  ---
+  duration_ms: 0.108274
+  type: 'test'
+  ...
+# Subtest: EMA: recurrence matches hand-computed value
+ok 27 - EMA: recurrence matches hand-computed value
+  ---
+  duration_ms: 0.128795
+  type: 'test'
+  ...
+# Subtest: EMA: not ready before `period` prices seen
+ok 28 - EMA: not ready before `period` prices seen
+  ---
+  duration_ms: 0.120618
+  type: 'test'
+  ...
+# Subtest: EMA: ready once `period` prices seen
+ok 29 - EMA: ready once `period` prices seen
+  ---
+  duration_ms: 0.087127
+  type: 'test'
+  ...
+# Subtest: RSI: null before period closes observed
+ok 30 - RSI: null before period closes observed
+  ---
+  duration_ms: 0.246527
+  type: 'test'
+  ...
+# Subtest: RSI: all-gains sequence approaches 100
+ok 31 - RSI: all-gains sequence approaches 100
+  ---
+  duration_ms: 0.296276
+  type: 'test'
+  ...
+# Subtest: RSI: all-losses sequence approaches 0
+ok 32 - RSI: all-losses sequence approaches 0
+  ---
+  duration_ms: 0.324082
+  type: 'test'
+  ...
+# Subtest: RSI: flat price sequence has no gains/losses (avgLoss=0, avgGain=0 -> 50)
+ok 33 - RSI: flat price sequence has no gains/losses (avgLoss=0, avgGain=0 -> 50)
+  ---
+  duration_ms: 0.133906
+  type: 'test'
+  ...
+# Subtest: RSI: matches a hand-computed 4-period example
+ok 34 - RSI: matches a hand-computed 4-period example
+  ---
+  duration_ms: 0.112345
+  type: 'test'
+  ...
+# Subtest: MACD: null until slow+signal EMAs are ready
+ok 35 - MACD: null until slow+signal EMAs are ready
+  ---
+  duration_ms: 0.127517
+  type: 'test'
+  ...
+# Subtest: MACD: becomes non-null once warmed up
+ok 36 - MACD: becomes non-null once warmed up
+  ---
+  duration_ms: 0.532655
+  type: 'test'
+  ...
+# Subtest: MACD: histogram is always exactly macd - signal once warmed
+ok 37 - MACD: histogram is always exactly macd - signal once warmed
+  ---
+  duration_ms: 0.226391
+  type: 'test'
+  ...
+# Subtest: MACD: a rising price sequence produces a positive MACD (fast EMA above slow EMA)
+ok 38 - MACD: a rising price sequence produces a positive MACD (fast EMA above slow EMA)
+  ---
+  duration_ms: 0.080309
+  type: 'test'
+  ...
+# Subtest: disabled settings resolve to the exact pre-A7b constants
+ok 39 - disabled settings resolve to the exact pre-A7b constants
+  ---
+  duration_ms: 2.16629
+  type: 'test'
+  ...
+# Subtest: disabled settings ignore a supplied round lead target
+ok 40 - disabled settings ignore a supplied round lead target
+  ---
+  duration_ms: 0.136965
+  type: 'test'
+  ...
+# Subtest: drawRoundLeadTarget reports unshaped when disabled
+ok 41 - drawRoundLeadTarget reports unshaped when disabled
+  ---
+  duration_ms: 0.304752
+  type: 'test'
+  ...
+# Subtest: imbalance is reachable — some rounds hit the directive shape
+ok 42 - imbalance is reachable — some rounds hit the directive shape
+  ---
+  duration_ms: 0.51182
+  type: 'test'
+  ...
+# Subtest: imbalance varies round to round — a constant skew is a new staircase
+ok 43 - imbalance varies round to round — a constant skew is a new staircase
+  ---
+  duration_ms: 0.4301
+  type: 'test'
+  ...
+# Subtest: lead side is unbiased — no systematic direction
+ok 44 - lead side is unbiased — no systematic direction
+  ---
+  duration_ms: 0.354381
+  type: 'test'
+  ...
+# Subtest: lead fraction stays inside the configured range
+ok 45 - lead fraction stays inside the configured range
+  ---
+  duration_ms: 0.501256
+  type: 'test'
+  ...
+# Subtest: the draw is biased toward moderate skew, not uniform
+ok 46 - the draw is biased toward moderate skew, not uniform
+  ---
+  duration_ms: 0.383259
+  type: 'test'
+  ...
+# Subtest: convergence is zero before the threshold and complete at round end
+ok 47 - convergence is zero before the threshold and complete at round end
+  ---
+  duration_ms: 0.261148
+  type: 'test'
+  ...
+# Subtest: convergence ramps monotonically after the threshold
+ok 48 - convergence ramps monotonically after the threshold
+  ---
+  duration_ms: 0.343297
+  type: 'test'
+  ...
+# Subtest: endgame values return to legacy so downstream protection is untouched
+ok 49 - endgame values return to legacy so downstream protection is untouched
+  ---
+  duration_ms: 0.162906
+  type: 'test'
+  ...
+# Subtest: mid-round keeps the wide values in full
+ok 50 - mid-round keeps the wide values in full
+  ---
+  duration_ms: 0.08053
+  type: 'test'
+  ...
+# Subtest: convergeStartFrac of 1.0 disables convergence entirely
+ok 51 - convergeStartFrac of 1.0 disables convergence entirely
+  ---
+  duration_ms: 0.064252
+  type: 'test'
+  ...
+# Subtest: a round lead target narrows but never widens the configured ceiling
+ok 52 - a round lead target narrows but never widens the configured ceiling
+  ---
+  duration_ms: 0.065553
+  type: 'test'
+  ...
+# Subtest: the steer stops once the target is reached
+ok 53 - the steer stops once the target is reached
+  ---
+  duration_ms: 0.079279
+  type: 'test'
+  ...
+# Subtest: the steer weakens monotonically as the lead grows
+ok 54 - the steer weakens monotonically as the lead grows
+  ---
+  duration_ms: 0.158226
+  type: 'test'
+  ...
+# Subtest: the steer stays ahead of the opposing pull until near the target
+ok 55 - the steer stays ahead of the opposing pull until near the target
+  ---
+  duration_ms: 0.116039
+  type: 'test'
+  ...
+# Subtest: the steer never exceeds its cap
+ok 56 - the steer never exceeds its cap
+  ---
+  duration_ms: 0.046632
+  type: 'test'
+  ...
+# Subtest: the steer is strong enough to actually reach its target
+ok 57 - the steer is strong enough to actually reach its target
+  ---
+  duration_ms: 0.066049
+  type: 'test'
+  ...
+# Subtest: drawn targets are always visibly different from parity
+ok 58 - drawn targets are always visibly different from parity
+  ---
+  duration_ms: 0.28739
+  type: 'test'
+  ...
+# Subtest: the size multiplier is neutral once the target is met
+ok 59 - the size multiplier is neutral once the target is met
+  ---
+  duration_ms: 0.071066
+  type: 'test'
+  ...
+# Subtest: the size multiplier grows the lead side and shrinks the other
+ok 60 - the size multiplier grows the lead side and shrinks the other
+  ---
+  duration_ms: 0.046072
+  type: 'test'
+  ...
+# Subtest: the size multiplier stays bounded so it cannot run away
+ok 61 - the size multiplier stays bounded so it cannot run away
+  ---
+  duration_ms: 0.139722
+  type: 'test'
+  ...
+# Subtest: empty rows yield the defaults
+ok 62 - empty rows yield the defaults
+  ---
+  duration_ms: 0.21438
+  type: 'test'
+  ...
+# Subtest: out-of-range rows fall back rather than throwing
+ok 63 - out-of-range rows fall back rather than throwing
+  ---
+  duration_ms: 0.075
+  type: 'test'
+  ...
+# Subtest: inverted pairs are swapped, not rejected, on the read path
+ok 64 - inverted pairs are swapped, not rejected, on the read path
+  ---
+  duration_ms: 0.069608
+  type: 'test'
+  ...
+# Subtest: the enabled flag round-trips
+ok 65 - the enabled flag round-trips
+  ---
+  duration_ms: 0.061285
+  type: 'test'
+  ...
+# Subtest: valid settings produce no errors
+ok 66 - valid settings produce no errors
+  ---
+  duration_ms: 0.184335
+  type: 'test'
+  ...
+# Subtest: the range error echoes the received value
+ok 67 - the range error echoes the received value
+  ---
+  duration_ms: 0.065703
+  type: 'test'
+  ...
+# Subtest: every range key produces a message for an out-of-range value
+ok 68 - every range key produces a message for an out-of-range value
+  ---
+  duration_ms: 0.147708
+  type: 'test'
+  ...
+# Subtest: cross-field rules are enforced on the write path
+ok 69 - cross-field rules are enforced on the write path
+  ---
+  duration_ms: 0.140465
+  type: 'test'
+  ...
+# Subtest: one bad field yields one error, not an avalanche of derived ones
+ok 70 - one bad field yields one error, not an avalanche of derived ones
+  ---
+  duration_ms: 0.070027
+  type: 'test'
+  ...
+# Subtest: all problems are reported together so the admin saves once
+ok 71 - all problems are reported together so the admin saves once
+  ---
+  duration_ms: 0.063546
+  type: 'test'
+  ...
+# Subtest: defaults produce no warnings
+ok 72 - defaults produce no warnings
+  ---
+  duration_ms: 0.159765
+  type: 'test'
+  ...
+# Subtest: a too-low lead ratio warns that pools will still look balanced
+ok 73 - a too-low lead ratio warns that pools will still look balanced
+  ---
+  duration_ms: 0.076038
+  type: 'test'
+  ...
+# Subtest: a narrow lead range warns about identical-looking rounds
+ok 74 - a narrow lead range warns about identical-looking rounds
+  ---
+  duration_ms: 0.062681
+  type: 'test'
+  ...
+# Subtest: a high weak-side bias warns that it cancels the asymmetry
+ok 75 - a high weak-side bias warns that it cancels the asymmetry
+  ---
+  duration_ms: 0.051629
+  type: 'test'
+  ...
+# Subtest: preview rounds sum to the whole pool
+ok 76 - preview rounds sum to the whole pool
+  ---
+  duration_ms: 0.108861
+  type: 'test'
+  ...
+# Subtest: preview is stable for a fixed seed and varies across seeds
+ok 77 - preview is stable for a fixed seed and varies across seeds
+  ---
+  duration_ms: 0.190738
+  type: 'test'
+  ...
+# Subtest: no NaN at the extremes of every range
+ok 78 - no NaN at the extremes of every range
+  ---
+  duration_ms: 0.596354
+  type: 'test'
+  ...
+# Subtest: elapsed fractions outside [0,1] are clamped, not propagated
+ok 79 - elapsed fractions outside [0,1] are clamped, not propagated
+  ---
+  duration_ms: 0.098309
+  type: 'test'
+  ...
+# Subtest: window: normal same-day range, inside
+ok 80 - window: normal same-day range, inside
+  ---
+  duration_ms: 1.165653
+  type: 'test'
+  ...
+# Subtest: window: normal same-day range, outside
+ok 81 - window: normal same-day range, outside
+  ---
+  duration_ms: 0.149172
+  type: 'test'
+  ...
+# Subtest: window: exact start boundary is inside
+ok 82 - window: exact start boundary is inside
+  ---
+  duration_ms: 0.100731
+  type: 'test'
+  ...
+# Subtest: window: exact end boundary is outside (exclusive)
+ok 83 - window: exact end boundary is outside (exclusive)
+  ---
+  duration_ms: 0.096942
+  type: 'test'
+  ...
+# Subtest: window: midnight wrap, inside late window
+ok 84 - window: midnight wrap, inside late window
+  ---
+  duration_ms: 0.15108
+  type: 'test'
+  ...
+# Subtest: window: midnight wrap, inside early window
+ok 85 - window: midnight wrap, inside early window
+  ---
+  duration_ms: 0.109778
+  type: 'test'
+  ...
+# Subtest: window: midnight wrap, outside
+ok 86 - window: midnight wrap, outside
+  ---
+  duration_ms: 0.146288
+  type: 'test'
+  ...
+# Subtest: window: from === to means always open
+ok 87 - window: from === to means always open
+  ---
+  duration_ms: 0.076434
+  type: 'test'
+  ...
+# Subtest: parseRotationSettings: empty map falls back to all defaults
+ok 88 - parseRotationSettings: empty map falls back to all defaults
+  ---
+  duration_ms: 1.422033
+  type: 'test'
+  ...
+# Subtest: parseRotationSettings: malformed values fall back to defaults
+ok 89 - parseRotationSettings: malformed values fall back to defaults
+  ---
+  duration_ms: 0.49673
+  type: 'test'
+  ...
+# Subtest: parseRotationSettings: valid values parse through
+ok 90 - parseRotationSettings: valid values parse through
+  ---
+  duration_ms: 0.210323
+  type: 'test'
+  ...
+# Subtest: parseRotationSettings: swaps cooldown min/max if inverted
+ok 91 - parseRotationSettings: swaps cooldown min/max if inverted
+  ---
+  duration_ms: 0.090684
+  type: 'test'
+  ...
+# Subtest: clampMinDistinct: clamps to 80% of pool size when config exceeds it
+ok 92 - clampMinDistinct: clamps to 80% of pool size when config exceeds it
+  ---
+  duration_ms: 0.071989
+  type: 'test'
+  ...
+# Subtest: clampMinDistinct: passes through when config is already satisfiable
+ok 93 - clampMinDistinct: passes through when config is already satisfiable
+  ---
+  duration_ms: 0.041385
+  type: 'test'
+  ...
+# Subtest: clampMinDistinct: zero pool size clamps to zero
+ok 94 - clampMinDistinct: zero pool size clamps to zero
+  ---
+  duration_ms: 0.036328
+  type: 'test'
+  ...
+# Subtest: minDistinctExclusionSet: k=0 excludes nothing
+ok 95 - minDistinctExclusionSet: k=0 excludes nothing
+  ---
+  duration_ms: 0.066579
+  type: 'test'
+  ...
+# Subtest: minDistinctExclusionSet: excludes the most recent k
+ok 96 - minDistinctExclusionSet: excludes the most recent k
+  ---
+  duration_ms: 0.134365
+  type: 'test'
+  ...
+# Subtest: applyMinDistinctGuard: excludes recently-used candidates when pool is large enough
+ok 97 - applyMinDistinctGuard: excludes recently-used candidates when pool is large enough
+  ---
+  duration_ms: 0.141009
+  type: 'test'
+  ...
+# Subtest: applyMinDistinctGuard: relaxes via the ladder instead of returning empty (starvation case)
+ok 98 - applyMinDistinctGuard: relaxes via the ladder instead of returning empty (starvation case)
+  ---
+  duration_ms: 0.145359
+  type: 'test'
+  ...
+# Subtest: applyMinDistinctGuard: empty input stays empty
+ok 99 - applyMinDistinctGuard: empty input stays empty
+  ---
+  duration_ms: 0.049263
+  type: 'test'
+  ...
+# Subtest: selectNpc: empty candidates returns null
+ok 100 - selectNpc: empty candidates returns null
+  ---
+  duration_ms: 0.123667
+  type: 'test'
+  ...
+# Subtest: selectNpc: single candidate returns it regardless of strategy
+ok 101 - selectNpc: single candidate returns it regardless of strategy
+  ---
+  duration_ms: 0.057955
+  type: 'test'
+  ...
+# Subtest: selectNpc: least_recently_used picks the never-used NPC over a recently-used one
+ok 102 - selectNpc: least_recently_used picks the never-used NPC over a recently-used one
+  ---
+  duration_ms: 0.056047
+  type: 'test'
+  ...
+# Subtest: selectNpc: least_recently_used picks the oldest timestamp
+ok 103 - selectNpc: least_recently_used picks the oldest timestamp
+  ---
+  duration_ms: 0.049602
+  type: 'test'
+  ...
+# Subtest: selectNpc: round_robin cycles through all candidates before repeating
+ok 104 - selectNpc: round_robin cycles through all candidates before repeating
+  ---
+  duration_ms: 0.175492
+  type: 'test'
+  ...
+# Subtest: selectNpc: weighted_random respects weighting over many draws
+ok 105 - selectNpc: weighted_random respects weighting over many draws
+  ---
+  duration_ms: 0.821573
+  type: 'test'
+  ...
+# Subtest: selectNpc: absent volumeWeight preserves exact pre-A7 behaviour
+ok 106 - selectNpc: absent volumeWeight preserves exact pre-A7 behaviour
+  ---
+  duration_ms: 0.249395
+  type: 'test'
+  ...
+# Subtest: selectNpc: volumeWeight shifts selection toward NPCs behind target
+ok 107 - selectNpc: volumeWeight shifts selection toward NPCs behind target
+  ---
+  duration_ms: 1.651716
+  type: 'test'
+  ...
+# Subtest: selectNpc: volumeWeight does not affect the non-weighted strategies
+ok 108 - selectNpc: volumeWeight does not affect the non-weighted strategies
+  ---
+  duration_ms: 0.146238
+  type: 'test'
+  ...
+# Subtest: drawCooldownMs: draws within [min, max] bounds
+ok 109 - drawCooldownMs: draws within [min, max] bounds
+  ---
+  duration_ms: 0.142146
+  type: 'test'
+  ...
+# Subtest: drawCooldownMs: equal min/max returns that fixed value
+ok 110 - drawCooldownMs: equal min/max returns that fixed value
+  ---
+  duration_ms: 0.051765
+  type: 'test'
+  ...
+# Subtest: shares: sum to 1 and are sorted descending
+ok 111 - shares: sum to 1 and are sorted descending
+  ---
+  duration_ms: 2.669104
+  type: 'test'
+  ...
+# Subtest: shares: degenerate slot counts do not produce NaN
+ok 112 - shares: degenerate slot counts do not produce NaN
+  ---
+  duration_ms: 1.414499
+  type: 'test'
+  ...
+# Subtest: shares: zero jitter still yields a decaying curve
+ok 113 - shares: zero jitter still yields a decaying curve
+  ---
+  duration_ms: 0.245639
+  type: 'test'
+  ...
+# Subtest: A7: rank1:rank2 mean sits near the 2.2x anchor
+ok 114 - A7: rank1:rank2 mean sits near the 2.2x anchor
+  ---
+  duration_ms: 3.362217
+  type: 'test'
+  ...
+# Subtest: A7: rank1:rank2 VARIES across rounds (a fixed ratio is itself a staircase)
+ok 115 - A7: rank1:rank2 VARIES across rounds (a fixed ratio is itself a staircase)
+  ---
+  duration_ms: 2.313398
+  type: 'test'
+  ...
+# Subtest: A7: adjacent gap ratios are non-uniform (no fixed staircase)
+ok 116 - A7: adjacent gap ratios are non-uniform (no fixed staircase)
+  ---
+  duration_ms: 1.200693
+  type: 'test'
+  ...
+# Subtest: A7: gini stays in the believable band
+ok 117 - A7: gini stays in the believable band
+  ---
+  duration_ms: 3.720341
+  type: 'test'
+  ...
+# Subtest: A7: the tail stays alive (power-law, not exponential collapse)
+ok 118 - A7: the tail stays alive (power-law, not exponential collapse)
+  ---
+  duration_ms: 0.629966
+  type: 'test'
+  ...
+# Subtest: plan: targets sum to 1 and respect plannedTraderCount
+ok 119 - plan: targets sum to 1 and respect plannedTraderCount
+  ---
+  duration_ms: 0.701452
+  type: 'test'
+  ...
+# Subtest: plan: clamps to the eligible pool rather than inventing traders
+ok 120 - plan: clamps to the eligible pool rather than inventing traders
+  ---
+  duration_ms: 0.348061
+  type: 'test'
+  ...
+# Subtest: plan: falls back to uniform below the shaping threshold
+ok 121 - plan: falls back to uniform below the shaping threshold
+  ---
+  duration_ms: 0.218253
+  type: 'test'
+  ...
+# Subtest: plan: empty pool is safe
+ok 122 - plan: empty pool is safe
+  ---
+  duration_ms: 0.078229
+  type: 'test'
+  ...
+# Subtest: PO decision 1: the previous leader never leads the next round
+ok 123 - PO decision 1: the previous leader never leads the next round
+  ---
+  duration_ms: 7.262386
+  type: 'test'
+  ...
+# Subtest: PO decision 1: unsatisfiable no-repeat degrades instead of starving
+ok 124 - PO decision 1: unsatisfiable no-repeat degrades instead of starving
+  ---
+  duration_ms: 0.147942
+  type: 'test'
+  ...
+# Subtest: A7: slot-1 identity is high-entropy across rounds
+ok 125 - A7: slot-1 identity is high-entropy across rounds
+  ---
+  duration_ms: 7.39493
+  type: 'test'
+  ...
+# Subtest: A7: per-NPC share barely correlates round-to-round
+ok 126 - A7: per-NPC share barely correlates round-to-round
+  ---
+  duration_ms: 12.385211
+  type: 'test'
+  ...
+# Subtest: volumeProfile biases the top slots without fixing the order
+ok 127 - volumeProfile biases the top slots without fixing the order
+  ---
+  duration_ms: 10.949935
+  type: 'test'
+  ...
+# Subtest: volumeProfile: a realistic spread still lets everyone lead sometimes
+ok 128 - volumeProfile: a realistic spread still lets everyone lead sometimes
+  ---
+  duration_ms: 19.423828
+  type: 'test'
+  ...
+# Subtest: quiet market: no reference yet means no scaling
+ok 129 - quiet market: no reference yet means no scaling
+  ---
+  duration_ms: 0.139055
+  type: 'test'
+  ...
+# Subtest: quiet market: dead round scales down but never to zero
+ok 130 - quiet market: dead round scales down but never to zero
+  ---
+  duration_ms: 0.061233
+  type: 'test'
+  ...
+# Subtest: quiet market: a single whale cannot drag NPC volume up proportionally
+ok 131 - quiet market: a single whale cannot drag NPC volume up proportionally
+  ---
+  duration_ms: 0.048164
+  type: 'test'
+  ...
+# Subtest: quiet market: normal activity passes through unscaled
+ok 132 - quiet market: normal activity passes through unscaled
+  ---
+  duration_ms: 0.048743
+  type: 'test'
+  ...
+# Subtest: quiet market: reference is a smoothed EMA, not the last round
+ok 133 - quiet market: reference is a smoothed EMA, not the last round
+  ---
+  duration_ms: 0.102919
+  type: 'test'
+  ...
+# Subtest: deficit weight: behind target outweighs met target, never zero
+ok 134 - deficit weight: behind target outweighs met target, never zero
+  ---
+  duration_ms: 0.073246
+  type: 'test'
+  ...
+# Subtest: amount nudge: bounded both ways and disabled at 1.0
+ok 135 - amount nudge: bounded both ways and disabled at 1.0
+  ---
+  duration_ms: 0.121803
+  type: 'test'
+  ...
+# Subtest: parse: empty map yields defaults
+ok 136 - parse: empty map yields defaults
+  ---
+  duration_ms: 0.188392
+  type: 'test'
+  ...
+# Subtest: parse: reads valid values
+ok 137 - parse: reads valid values
+  ---
+  duration_ms: 0.125861
+  type: 'test'
+  ...
+# Subtest: parse: out-of-range or garbage values fall back to defaults (read path never throws)
+ok 138 - parse: out-of-range or garbage values fall back to defaults (read path never throws)
+  ---
+  duration_ms: 0.072673
+  type: 'test'
+  ...
+# Subtest: parse: inverted bounds are swapped, matching parseRotationSettings
+ok 139 - parse: inverted bounds are swapped, matching parseRotationSettings
+  ---
+  duration_ms: 0.073662
+  type: 'test'
+  ...
+# Subtest: parse: counts are integers even when written as floats
+ok 140 - parse: counts are integers even when written as floats
+  ---
+  duration_ms: 0.054618
+  type: 'test'
+  ...
+# Subtest: validate: accepts a good batch
+ok 141 - validate: accepts a good batch
+  ---
+  duration_ms: 0.180159
+  type: 'test'
+  ...
+# Subtest: validate: percent-as-fraction typo is rejected and echoes the value
+ok 142 - validate: percent-as-fraction typo is rejected and echoes the value
+  ---
+  duration_ms: 0.154796
+  type: 'test'
+  ...
+# Subtest: validate: reports every problem, not just the first
+ok 143 - validate: reports every problem, not just the first
+  ---
+  duration_ms: 0.063177
+  type: 'test'
+  ...
+# Subtest: validate: cross-field inversions are caught
+ok 144 - validate: cross-field inversions are caught
+  ---
+  duration_ms: 0.133088
+  type: 'test'
+  ...
+# Subtest: validate: ignores unrelated and blank keys
+ok 145 - validate: ignores unrelated and blank keys
+  ---
+  duration_ms: 0.179958
+  type: 'test'
+  ...
+# Subtest: validate: every range key produces a usable message
+ok 146 - validate: every range key produces a usable message
+  ---
+  duration_ms: 0.145273
+  type: 'test'
+  ...
+# Subtest: warnings: narrow alpha range and disabled no-repeat are flagged
+ok 147 - warnings: narrow alpha range and disabled no-repeat are flagged
+  ---
+  duration_ms: 0.19528
+  type: 'test'
+  ...
+# Subtest: warnings: planned count above the eligible pool is flagged
+ok 148 - warnings: planned count above the eligible pool is flagged
+  ---
+  duration_ms: 0.091379
+  type: 'test'
+  ...
+# Subtest: warnings: healthy defaults produce none
+ok 149 - warnings: healthy defaults produce none
+  ---
+  duration_ms: 0.064822
+  type: 'test'
+  ...
+# Subtest: a user with a BUY stake gets a real projected payout only from the BUY-forced scenario
+ok 150 - a user with a BUY stake gets a real projected payout only from the BUY-forced scenario
+  ---
+  duration_ms: 7.220537
+  type: 'test'
+  ...
+# Subtest: a user with no active stake in the active battle has no entry (treated as $0 exposure)
+ok 151 - a user with no active stake in the active battle has no entry (treated as $0 exposure)
+  ---
+  duration_ms: 0.39815
+  type: 'test'
+  ...
+# Subtest: no battle found returns an empty map
+ok 152 - no battle found returns an empty map
+  ---
+  duration_ms: 0.169844
+  type: 'test'
+  ...
+# Subtest: one-directional gifts never flag, regardless of amount
+ok 153 - one-directional gifts never flag, regardless of amount
+  ---
+  duration_ms: 1.738474
+  type: 'test'
+  ...
+# Subtest: bidirectional pair below both thresholds does not flag
+ok 154 - bidirectional pair below both thresholds does not flag
+  ---
+  duration_ms: 0.149645
+  type: 'test'
+  ...
+# Subtest: bidirectional pair over the amount threshold flags
+ok 155 - bidirectional pair over the amount threshold flags
+  ---
+  duration_ms: 0.195652
+  type: 'test'
+  ...
+# Subtest: bidirectional pair over the count threshold flags even with low amounts
+ok 156 - bidirectional pair over the count threshold flags even with low amounts
+  ---
+  duration_ms: 0.280645
+  type: 'test'
+  ...
+# Subtest: self-gifts are ignored
+ok 157 - self-gifts are ignored
+  ---
+  duration_ms: 0.110247
+  type: 'test'
+  ...
+# Subtest: multiple independent pairs are each evaluated separately
+ok 158 - multiple independent pairs are each evaluated separately
+  ---
+  duration_ms: 0.113484
+  type: 'test'
+  ...
+# Subtest: clean input scores 0 and classifies LOW
+ok 159 - clean input scores 0 and classifies LOW
+  ---
+  duration_ms: 2.869859
+  type: 'test'
+  ...
+# Subtest: Identity/KYC category caps at 20 even if signals would exceed it
+ok 160 - Identity/KYC category caps at 20 even if signals would exceed it
+  ---
+  duration_ms: 0.363836
+  type: 'test'
+  ...
+# Subtest: account-age rules are mutually exclusive — only higher value applies
+ok 161 - account-age rules are mutually exclusive — only higher value applies
+  ---
+  duration_ms: 0.236266
+  type: 'test'
+  ...
+# Subtest: Funds/Ledger category caps at 25
+ok 162 - Funds/Ledger category caps at 25
+  ---
+  duration_ms: 0.149316
+  type: 'test'
+  ...
+# Subtest: payout-method-age rules are mutually exclusive with the 72h-change rule
+ok 163 - payout-method-age rules are mutually exclusive with the 72h-change rule
+  ---
+  duration_ms: 0.418509
+  type: 'test'
+  ...
+# Subtest: null device/IP/payout-linkage signals contribute 0 points but are recorded as not-yet-available
+ok 164 - null device/IP/payout-linkage signals contribute 0 points but are recorded as not-yet-available
+  ---
+  duration_ms: 0.237445
+  type: 'test'
+  ...
+# Subtest: amount anomaly only applies with >= 3 prior completed amounts
+ok 165 - amount anomaly only applies with >= 3 prior completed amounts
+  ---
+  duration_ms: 0.198241
+  type: 'test'
+  ...
+# Subtest: velocity breach: 3+ in 24h or 5+ in 7d triggers +10
+ok 166 - velocity breach: 3+ in 24h or 5+ in 7d triggers +10
+  ---
+  duration_ms: 0.117759
+  type: 'test'
+  ...
+# Subtest: Trading Integrity: only the single highest active signal counts
+ok 167 - Trading Integrity: only the single highest active signal counts
+  ---
+  duration_ms: 0.394766
+  type: 'test'
+  ...
+# Subtest: Trading Integrity: HIGH terminal alert alone scores 15
+ok 168 - Trading Integrity: HIGH terminal alert alone scores 15
+  ---
+  duration_ms: 0.467255
+  type: 'test'
+  ...
+# Subtest: Trading Integrity: no signals scores 0
+ok 169 - Trading Integrity: no signals scores 0
+  ---
+  duration_ms: 0.211547
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: expired KYC
+ok 170 - critical rule short-circuits to BLOCKED_CRITICAL: expired KYC
+  ---
+  duration_ms: 0.11769
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: non-VERIFIED KYC
+ok 171 - critical rule short-circuits to BLOCKED_CRITICAL: non-VERIFIED KYC
+  ---
+  duration_ms: 0.056868
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: sanctions match
+ok 172 - critical rule short-circuits to BLOCKED_CRITICAL: sanctions match
+  ---
+  duration_ms: 0.043086
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: compliance hold
+ok 173 - critical rule short-circuits to BLOCKED_CRITICAL: compliance hold
+  ---
+  duration_ms: 0.039523
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: suspected takeover
+ok 174 - critical rule short-circuits to BLOCKED_CRITICAL: suspected takeover
+  ---
+  duration_ms: 0.038816
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: beneficiary mismatch
+ok 175 - critical rule short-circuits to BLOCKED_CRITICAL: beneficiary mismatch
+  ---
+  duration_ms: 0.038064
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: insufficient balance
+ok 176 - critical rule short-circuits to BLOCKED_CRITICAL: insufficient balance
+  ---
+  duration_ms: 0.039729
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: unsettled balance
+ok 177 - critical rule short-circuits to BLOCKED_CRITICAL: unsettled balance
+  ---
+  duration_ms: 0.049209
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: ledger inconsistency
+ok 178 - critical rule short-circuits to BLOCKED_CRITICAL: ledger inconsistency
+  ---
+  duration_ms: 0.041331
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: active chargeback
+ok 179 - critical rule short-circuits to BLOCKED_CRITICAL: active chargeback
+  ---
+  duration_ms: 0.042397
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: duplicate payout
+ok 180 - critical rule short-circuits to BLOCKED_CRITICAL: duplicate payout
+  ---
+  duration_ms: 0.077927
+  type: 'test'
+  ...
+# Subtest: critical rule short-circuits to BLOCKED_CRITICAL: active investigation
+ok 181 - critical rule short-circuits to BLOCKED_CRITICAL: active investigation
+  ---
+  duration_ms: 0.119297
+  type: 'test'
+  ...
+# Subtest: requiredServicesAvailable=false alone (no other critical reason) yields SCORE_INCOMPLETE, not BLOCKED_CRITICAL
+ok 182 - requiredServicesAvailable=false alone (no other critical reason) yields SCORE_INCOMPLETE, not BLOCKED_CRITICAL
+  ---
+  duration_ms: 0.110082
+  type: 'test'
+  ...
+# Subtest: requiredServicesAvailable=false alongside a real critical reason yields BLOCKED_CRITICAL, not SCORE_INCOMPLETE
+ok 183 - requiredServicesAvailable=false alongside a real critical reason yields BLOCKED_CRITICAL, not SCORE_INCOMPLETE
+  ---
+  duration_ms: 0.0876
+  type: 'test'
+  ...
+# Subtest: score boundary 29 classifies LOW, 30 classifies MEDIUM
+ok 184 - score boundary 29 classifies LOW, 30 classifies MEDIUM
+  ---
+  duration_ms: 0.100859
+  type: 'test'
+  ...
+# Subtest: score boundary 59/60 — MEDIUM vs HIGH
+ok 185 - score boundary 59/60 — MEDIUM vs HIGH
+  ---
+  duration_ms: 0.108176
+  type: 'test'
+  ...
+# Subtest: total score is capped at 100 even if all categories max out
+ok 186 - total score is capped at 100 even if all categories max out
+  ---
+  duration_ms: 0.115003
+  type: 'test'
+  ...
+# Subtest: policyVersion is present on every result
+ok 187 - policyVersion is present on every result
+  ---
+  duration_ms: 0.063682
+  type: 'test'
+  ...
+1..187
+# tests 187
+# suites 0
+# pass 184
+# fail 3
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 8673.837545

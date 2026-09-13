@@ -1,0 +1,741 @@
+
+> engine@1.0.0 test /home/claude/wb/backend/apps/engine
+> node --test -r ts-node/register "src/**/*.spec.ts"
+
+TAP version 13
+# Subtest: the nudge never inverts a model that wants the other way
+not ok 1 - the nudge never inverts a model that wants the other way
+  ---
+  duration_ms: 4.908118
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/battle/directional-floor-sign.spec.ts:61:25'
+  failureType: 'testCodeFailure'
+  error: 'SELL $31.39 was forced to the floor (-0.0200 pips) against a model that wanted the other way'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/battle/directional-floor-sign.spec.ts:67:16)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: a balanced book still holds price near the round entry
+ok 2 - a balanced book still holds price near the round entry
+  ---
+  duration_ms: 2.351787
+  type: 'test'
+  ...
+# Subtest: the nudge still fires when the model is motionless
+ok 3 - the nudge still fires when the model is motionless
+  ---
+  duration_ms: 0.233003
+  type: 'test'
+  ...
+# Subtest: the nudge still tops up a too-small move in its own direction
+ok 4 - the nudge still tops up a too-small move in its own direction
+  ---
+  duration_ms: 0.182907
+  type: 'test'
+  ...
+# Subtest: genuine one-sided pressure still moves price decisively
+ok 5 - genuine one-sided pressure still moves price decisively
+  ---
+  duration_ms: 0.425349
+  type: 'test'
+  ...
+# Subtest: balanced alternating flow holds price near the round entry price
+ok 6 - balanced alternating flow holds price near the round entry price
+  ---
+  duration_ms: 2.330978
+  type: 'test'
+  ...
+# Subtest: equal dollar volume split into more orders does not win
+not ok 7 - equal dollar volume split into more orders does not win
+  ---
+  duration_ms: 27.407394
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/battle/price-from-imbalance.balance.spec.ts:128:25'
+  failureType: 'testCodeFailure'
+  error: 'order-count asymmetry moved price -179.97 pips on balanced dollar volume'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/battle/price-from-imbalance.balance.spec.ts:170:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: many small orders and few large ones of equal volume agree
+not ok 8 - many small orders and few large ones of equal volume agree
+  ---
+  duration_ms: 6.546887
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/battle/price-from-imbalance.balance.spec.ts:136:25'
+  failureType: 'testCodeFailure'
+  error: 'clip size changed the outcome by -179.97 pips (100x$40 => -179.97, 4x$1000 => 0.00)'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/battle/price-from-imbalance.balance.spec.ts:190:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: the same order moves price less into a deep book than a thin one
+not ok 9 - the same order moves price less into a deep book than a thin one
+  ---
+  duration_ms: 0.469447
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/battle/price-from-imbalance.balance.spec.ts:145:25'
+  failureType: 'testCodeFailure'
+  error: 'book depth did not damp impact: thin -2.38 pips vs deep -2.38 pips'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/battle/price-from-imbalance.balance.spec.ts:208:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: reported round: 1.7% pot skew does not produce a 30-pip move
+not ok 10 - reported round: 1.7% pot skew does not produce a 30-pip move
+  ---
+  duration_ms: 0.608765
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/battle/price-from-imbalance.balance.spec.ts:158:25'
+  failureType: 'testCodeFailure'
+  error: 'expected a small move for a 1.7% skew, got -144.34 pips'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/battle/price-from-imbalance.balance.spec.ts:225:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: a decisively skewed book still moves price in the dominant direction
+ok 11 - a decisively skewed book still moves price in the dominant direction
+  ---
+  duration_ms: 0.334578
+  type: 'test'
+  ...
+# Subtest: the first NPC order of a round cannot pin price at the clamp ceiling
+ok 12 - the first NPC order of a round cannot pin price at the clamp ceiling
+  ---
+  duration_ms: 0.764866
+  type: 'test'
+  ...
+# Subtest: thin-book impact ramps up rather than starting at full strength
+ok 13 - thin-book impact ramps up rather than starting at full strength
+  ---
+  duration_ms: 0.192721
+  type: 'test'
+  ...
+# Subtest: price direction follows the book, not a carried-over pressure bias
+ok 14 - price direction follows the book, not a carried-over pressure bias
+  ---
+  duration_ms: 0.589174
+  type: 'test'
+  ...
+# Subtest: identical trade into identical pot state moves price the same at 5% and 95% elapsed (non-finalize)
+ok 15 - identical trade into identical pot state moves price the same at 5% and 95% elapsed (non-finalize)
+  ---
+  duration_ms: 1.667244
+  type: 'test'
+  ...
+# Subtest: whale trade late in the round (98% elapsed, pre-freeze) moves price the same as an identical trade early (2% elapsed)
+ok 16 - whale trade late in the round (98% elapsed, pre-freeze) moves price the same as an identical trade early (2% elapsed)
+  ---
+  duration_ms: 0.174262
+  type: 'test'
+  ...
+# Subtest: the balance-stabilizer clamp is timing-invariant for a fixed near-balanced pot state
+ok 17 - the balance-stabilizer clamp is timing-invariant for a fixed near-balanced pot state
+  ---
+  duration_ms: 0.177174
+  type: 'test'
+  ...
+# Subtest: isFinalize=true still applies the unchanged 0.4 stage cap (out of scope for this fix)
+not ok 18 - isFinalize=true still applies the unchanged 0.4 stage cap (out of scope for this fix)
+  ---
+  duration_ms: 21.469757
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/battle/price-timing-invariance.spec.ts:99:25'
+  failureType: 'testCodeFailure'
+  error: 'expected the finalize-window cap to still dampen impact relative to the same trade outside finalize, got |5.502078082806859| (finalize) vs |5.502078082806859| (non-finalize)'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/battle/price-timing-invariance.spec.ts:150:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: buffered real stake remains REAL in engine socket projection before PostgreSQL flush
+ok 19 - buffered real stake remains REAL in engine socket projection before PostgreSQL flush
+  ---
+  duration_ms: 31.30007
+  type: 'test'
+  ...
+# Subtest: buffered RPC-linked stake stays outside REAL while human stake stays inside
+ok 20 - buffered RPC-linked stake stays outside REAL while human stake stays inside
+  ---
+  duration_ms: 31.286136
+  type: 'test'
+  ...
+# Subtest: buffering disabled retains PostgreSQL projection path
+ok 21 - buffering disabled retains PostgreSQL projection path
+  ---
+  duration_ms: 6.677952
+  type: 'test'
+  ...
+# Subtest: no live price emits no fabricated projection
+ok 22 - no live price emits no fabricated projection
+  ---
+  duration_ms: 20.705119
+  type: 'test'
+  ...
+# Subtest: invalid live price emits no misleading projection
+ok 23 - invalid live price emits no misleading projection
+  ---
+  duration_ms: 20.123466
+  type: 'test'
+  ...
+# Subtest: Redis read failure does not silently publish a PostgreSQL-based split
+ok 24 - Redis read failure does not silently publish a PostgreSQL-based split
+  ---
+  duration_ms: 36.41587
+  type: 'test'
+  ...
+# Subtest: malformed buffer entries do not invent human stake volume
+ok 25 - malformed buffer entries do not invent human stake volume
+  ---
+  duration_ms: 11.183794
+  type: 'test'
+  ...
+# Subtest: projection retains battle identity, countdown and computation timestamp
+ok 26 - projection retains battle identity, countdown and computation timestamp
+  ---
+  duration_ms: 5.711852
+  type: 'test'
+  ...
+# Subtest: RULE 2: the reported round no longer drifts ~31 pips below entry
+not ok 27 - RULE 2: the reported round no longer drifts ~31 pips below entry
+  ---
+  duration_ms: 5.30864
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/battle/round-entry-po-scenario.spec.ts:107:25'
+  failureType: 'testCodeFailure'
+  error: 'pots 1.7% apart but price moved -144.3 pips (reported was 31.2)'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/battle/round-entry-po-scenario.spec.ts:124:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: RULE 1: price tracks net imbalance, not order count
+not ok 28 - RULE 1: price tracks net imbalance, not order count
+  ---
+  duration_ms: 1.016082
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/battle/round-entry-po-scenario.spec.ts:114:25'
+  failureType: 'testCodeFailure'
+  error: 'clip size alone changed the outcome by -144.3 pips'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/battle/round-entry-po-scenario.spec.ts:141:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: RULE 1: a genuine imbalance still moves price decisively
+ok 29 - RULE 1: a genuine imbalance still moves price decisively
+  ---
+  duration_ms: 0.289652
+  type: 'test'
+  ...
+# Subtest: RULE 3: a previous round's smoothed pressure cannot steer this round
+ok 30 - RULE 3: a previous round's smoothed pressure cannot steer this round
+  ---
+  duration_ms: 0.656745
+  type: 'test'
+  ...
+# Subtest: RULE 3: a previous round's pots cannot steer this round
+not ok 31 - RULE 3: a previous round's pots cannot steer this round
+  ---
+  duration_ms: 0.917111
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/battle/round-entry-po-scenario.spec.ts:139:25'
+  failureType: 'testCodeFailure'
+  error: 'clean round should sit near entry'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/battle/round-entry-po-scenario.spec.ts:178:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: UNSEEDED: a one-sided open reproduces the reported excursion
+ok 32 - UNSEEDED: a one-sided open reproduces the reported excursion
+  ---
+  duration_ms: 2.280263
+  type: 'test'
+  ...
+# Subtest: SEEDED: the same burst stays near the round entry price
+ok 33 - SEEDED: the same burst stays near the round entry price
+  ---
+  duration_ms: 0.605252
+  type: 'test'
+  ...
+# Subtest: SEEDED: an order meets a real book instead of owning it
+ok 34 - SEEDED: an order meets a real book instead of owning it
+  ---
+  duration_ms: 0.168108
+  type: 'test'
+  ...
+# Subtest: SEEDED: near-balanced pots do not produce a large move
+ok 35 - SEEDED: near-balanced pots do not produce a large move
+  ---
+  duration_ms: 0.509948
+  type: 'test'
+  ...
+# Subtest: the seed itself barely moves price
+ok 36 - the seed itself barely moves price
+  ---
+  duration_ms: 0.142248
+  type: 'test'
+  ...
+# Subtest: a genuine imbalance still moves price decisively after seeding
+ok 37 - a genuine imbalance still moves price decisively after seeding
+  ---
+  duration_ms: 0.535823
+  type: 'test'
+  ...
+# Subtest: REGRESSION: sending the true qty book is calmer than letting the handler rebuild it
+not ok 38 - REGRESSION: sending the true qty book is calmer than letting the handler rebuild it
+  ---
+  duration_ms: 5.166135
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/battle/round-open-seed-qty-book.spec.ts:80:25'
+  failureType: 'testCodeFailure'
+  error: 'expected the summed book to move price less than the reconstruction, got 0.144 vs 0.144 pips'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/battle/round-open-seed-qty-book.spec.ts:89:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: a partial seed stays sub-pip once the true book is sent
+ok 39 - a partial seed stays sub-pip once the true book is sent
+  ---
+  duration_ms: 0.20844
+  type: 'test'
+  ...
+# Subtest: the reconstruction stays bounded by the pot-skew ratio cap
+ok 40 - the reconstruction stays bounded by the pot-skew ratio cap
+  ---
+  duration_ms: 0.295116
+  type: 'test'
+  ...
+# Subtest: the summed seed book reflects both sides, not just the last leg
+ok 41 - the summed seed book reflects both sides, not just the last leg
+  ---
+  duration_ms: 0.10405
+  type: 'test'
+  ...
+# Subtest: a level book does not force a directional step
+ok 42 - a level book does not force a directional step
+  ---
+  duration_ms: 1.038809
+  type: 'test'
+  ...
+# Subtest: equal counts of equal-size orders cancel exactly
+ok 43 - equal counts of equal-size orders cancel exactly
+  ---
+  duration_ms: 0.35954
+  type: 'test'
+  ...
+# Subtest: lopsided order counts on a level book do not ratchet
+ok 44 - lopsided order counts on a level book do not ratchet
+  ---
+  duration_ms: 0.367259
+  type: 'test'
+  ...
+# Subtest: a decided book still gets its directional step
+ok 45 - a decided book still gets its directional step
+  ---
+  duration_ms: 0.105899
+  type: 'test'
+  ...
+# Subtest: an agreeing computed price is left alone
+ok 46 - an agreeing computed price is left alone
+  ---
+  duration_ms: 0.095671
+  type: 'test'
+  ...
+# Subtest: profitable BUY bias in Phase 1 picks BUY deterministically
+ok 47 - profitable BUY bias in Phase 1 picks BUY deterministically
+  ---
+  duration_ms: 1.330901
+  type: 'test'
+  ...
+# Subtest: profitable SELL bias in Phase 1 picks SELL deterministically
+ok 48 - profitable SELL bias in Phase 1 picks SELL deterministically
+  ---
+  duration_ms: 0.171638
+  type: 'test'
+  ...
+# Subtest: force empty-side win in final window (Scenario A)
+not ok 49 - force empty-side win in final window (Scenario A)
+  ---
+  duration_ms: 0.757134
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/npc/npc-simulator.protection.spec.ts:62:25'
+  failureType: 'testCodeFailure'
+  error: "Cannot read properties of undefined (reading 'findUnique')"
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    NpcSimulatorService.computeModelAPayoutSnapshot (/home/claude/wb/backend/apps/engine/src/npc/npc-simulator.service.ts:7667:49)
+    NpcSimulatorService.getPayoutLiabilityMetrics (/home/claude/wb/backend/apps/engine/src/npc/npc-simulator.service.ts:7853:30)
+    NpcSimulatorService.runPhase2RiskCheck (/home/claude/wb/backend/apps/engine/src/npc/npc-simulator.service.ts:14366:30)
+    async TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/npc/npc-simulator.protection.spec.ts:79:20)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: dilution when projected company outcome is negative
+not ok 50 - dilution when projected company outcome is negative
+  ---
+  duration_ms: 9.039194
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/npc/npc-simulator.protection.spec.ts:77:25'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+    
+      ok(result)
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/npc/npc-simulator.protection.spec.ts:94:12)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: no unnecessary dilution when company is safe
+ok 51 - no unnecessary dilution when company is safe
+  ---
+  duration_ms: 0.201217
+  type: 'test'
+  ...
+# Subtest: Phase 2 overrides Phase 1 at 10 seconds boundary
+not ok 52 - Phase 2 overrides Phase 1 at 10 seconds boundary
+  ---
+  duration_ms: 0.809913
+  type: 'test'
+  location: '/home/claude/wb/backend/apps/engine/src/npc/npc-simulator.protection.spec.ts:103:25'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    'PHASE1' !== 'PHASE2'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'PHASE2'
+  actual: 'PHASE1'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/home/claude/wb/backend/apps/engine/src/npc/npc-simulator.protection.spec.ts:114:12)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: repeated protection evaluation is deduplicated per second/side
+ok 53 - repeated protection evaluation is deduplicated per second/side
+  ---
+  duration_ms: 0.2897
+  type: 'test'
+  ...
+# Subtest: persisted OFF before startup remains OFF without start or enable write
+ok 54 - persisted OFF before startup remains OFF without start or enable write
+  ---
+  duration_ms: 1.999447
+  type: 'test'
+  ...
+# Subtest: OFF on leadership startup stops an already active stub without changing the flag
+ok 55 - OFF on leadership startup stops an already active stub without changing the flag
+  ---
+  duration_ms: 0.30444
+  type: 'test'
+  ...
+# Subtest: persisted ON starts once without rewriting the operator flag
+ok 56 - persisted ON starts once without rewriting the operator flag
+  ---
+  duration_ms: 0.292387
+  type: 'test'
+  ...
+# Subtest: missing flag retains the existing shared default ON without persisting a new choice
+ok 57 - missing flag retains the existing shared default ON without persisting a new choice
+  ---
+  duration_ms: 0.152947
+  type: 'test'
+  ...
+# Subtest: empty flag retains the existing shared default ON without persisting a new choice
+ok 58 - empty flag retains the existing shared default ON without persisting a new choice
+  ---
+  duration_ms: 0.18991
+  type: 'test'
+  ...
+# Subtest: standby startup does not read, start or overwrite the operator choice
+ok 59 - standby startup does not read, start or overwrite the operator choice
+  ---
+  duration_ms: 0.116311
+  type: 'test'
+  ...
+# Subtest: poll continues to honour OFF without rewriting it
+ok 60 - poll continues to honour OFF without rewriting it
+  ---
+  duration_ms: 0.267175
+  type: 'test'
+  ...
+# Subtest: operator STOP arriving after boot read is not overwritten and the next poll stops
+ok 61 - operator STOP arriving after boot read is not overwritten and the next poll stops
+  ---
+  duration_ms: 0.295196
+  type: 'test'
+  ...
+# Subtest: pips scale with price, so Distance is not a raw 4-decimal count
+ok 62 - pips scale with price, so Distance is not a raw 4-decimal count
+  ---
+  duration_ms: 0.906611
+  type: 'test'
+  ...
+# Subtest: net position: $100 buy + $40 sell is $60 net BUY
+ok 63 - net position: $100 buy + $40 sell is $60 net BUY
+  ---
+  duration_ms: 0.180329
+  type: 'test'
+  ...
+# Subtest: net position: equal buy and sell is flat, no side
+ok 64 - net position: equal buy and sell is flat, no side
+  ---
+  duration_ms: 0.098259
+  type: 'test'
+  ...
+# Subtest: net position: flat uses the settlement hedge tolerance, not exact zero
+ok 65 - net position: flat uses the settlement hedge tolerance, not exact zero
+  ---
+  duration_ms: 0.132806
+  type: 'test'
+  ...
+# Subtest: flip profit: pays the trader from the real loser pool on their own stake
+ok 66 - flip profit: pays the trader from the real loser pool on their own stake
+  ---
+  duration_ms: 1.531484
+  type: 'test'
+  ...
+# Subtest: a winning scenario can never show a loss when there is no opposing leg
+ok 67 - a winning scenario can never show a loss when there is no opposing leg
+  ---
+  duration_ms: 0.403007
+  type: 'test'
+  ...
+# Subtest: flip profit is modelled at the flip price, one pip past the round price
+ok 68 - flip profit is modelled at the flip price, one pip past the round price
+  ---
+  duration_ms: 0.437038
+  type: 'test'
+  ...
+# Subtest: flip profit nets off the forfeited opposing leg
+ok 69 - flip profit nets off the forfeited opposing leg
+  ---
+  duration_ms: 0.347296
+  type: 'test'
+  ...
+# Subtest: flip profit uses netLoserPool x score share, never an entry multiplier
+ok 70 - flip profit uses netLoserPool x score share, never an entry multiplier
+  ---
+  duration_ms: 0.722188
+  type: 'test'
+  ...
+# Subtest: flip profit ignores pool size changes that do not change the trader stake
+ok 71 - flip profit ignores pool size changes that do not change the trader stake
+  ---
+  duration_ms: 0.76049
+  type: 'test'
+  ...
+# Subtest: flip profit: no position and wrong-side requests are ineligible
+ok 72 - flip profit: no position and wrong-side requests are ineligible
+  ---
+  duration_ms: 0.46918
+  type: 'test'
+  ...
+# Subtest: flip profit: hedged trader has no net side to flip
+ok 73 - flip profit: hedged trader has no net side to flip
+  ---
+  duration_ms: 0.253317
+  type: 'test'
+  ...
+# Subtest: flip profit: reads the runtime fee rate rather than hardcoding 0.3
+ok 74 - flip profit: reads the runtime fee rate rather than hardcoding 0.3
+  ---
+  duration_ms: 0.367261
+  type: 'test'
+  ...
+# Subtest: normal mixed real+NPC settlement distributes by score share
+ok 75 - normal mixed real+NPC settlement distributes by score share
+  ---
+  duration_ms: 1.319805
+  type: 'test'
+  ...
+# Subtest: real winner liability stays within the net loser pool
+ok 76 - real winner liability stays within the net loser pool
+  ---
+  duration_ms: 0.255949
+  type: 'test'
+  ...
+# Subtest: NPC winning volume dilutes real payout share (injectionAmount is not used by the current engine)
+ok 77 - NPC winning volume dilutes real payout share (injectionAmount is not used by the current engine)
+  ---
+  duration_ms: 0.21457
+  type: 'test'
+  ...
+# Subtest: zero real losers: NPC losing volume backs real-winner payouts as a fallback
+ok 78 - zero real losers: NPC losing volume backs real-winner payouts as a fallback
+  ---
+  duration_ms: 0.195707
+  type: 'test'
+  ...
+# Subtest: exact scenario from requirements
+ok 79 - exact scenario from requirements
+  ---
+  duration_ms: 0.294302
+  type: 'test'
+  ...
+# Subtest: estimate: floor never exceeds typical
+ok 80 - estimate: floor never exceeds typical
+  ---
+  duration_ms: 2.313055
+  type: 'test'
+  ...
+# Subtest: profit rounding keeps losses negative
+ok 81 - profit rounding keeps losses negative
+  ---
+  duration_ms: 0.183199
+  type: 'test'
+  ...
+# Subtest: typical is not inflated by NPC volume on the winning side
+ok 82 - typical is not inflated by NPC volume on the winning side
+  ---
+  duration_ms: 0.894972
+  type: 'test'
+  ...
+# Subtest: estimate: ineligible when there is no opposing pool
+ok 83 - estimate: ineligible when there is no opposing pool
+  ---
+  duration_ms: 0.292763
+  type: 'test'
+  ...
+# Subtest: estimate: reads platform fee rate at runtime, never hardcodes 0.3
+ok 84 - estimate: reads platform fee rate at runtime, never hardcodes 0.3
+  ---
+  duration_ms: 0.604383
+  type: 'test'
+  ...
+# Subtest: estimate: fee rate is clamped to [0, 0.95]
+ok 85 - estimate: fee rate is clamped to [0, 0.95]
+  ---
+  duration_ms: 0.336292
+  type: 'test'
+  ...
+# Subtest: parity: settled payout >= quoted floor (pool state constant)
+ok 86 - parity: settled payout >= quoted floor (pool state constant)
+  ---
+  duration_ms: 0.611282
+  type: 'test'
+  ...
+# Subtest: parity property: floor invariant holds across randomised pools and fees
+ok 87 - parity property: floor invariant holds across randomised pools and fees
+  ---
+  duration_ms: 3.926797
+  type: 'test'
+  ...
+1..87
+# tests 87
+# suites 0
+# pass 74
+# fail 13
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 19138.169828
+/home/claude/wb/backend/apps/engine:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  engine@1.0.0 test: `node --test -r ts-node/register "src/**/*.spec.ts"`
+Exit status 1

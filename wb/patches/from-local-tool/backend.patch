@@ -1,0 +1,365 @@
+diff -ruN '--exclude=.npmrc' a/apps/engine/src/battle/README.npc-risk.md b/apps/engine/src/battle/README.npc-risk.md
+--- a/apps/engine/src/battle/README.npc-risk.md	1970-01-01 00:00:00.000000000 +0000
++++ b/apps/engine/src/battle/README.npc-risk.md	2020-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,17 @@
++# Risk Terminal regression tests
++
++After installing this backend workspace's existing development dependencies, run from its root:
++
++```sh
++node --test apps/engine/src/battle/risk-terminal-regression.cjs
++```
++
++The existing engine test recipe also includes these eight cases through `risk-terminal-regression.spec.ts`:
++
++```sh
++pnpm --filter engine exec node --test -r ts-node/register src/battle/risk-terminal-regression.spec.ts
++```
++
++The harness resolves TypeScript and ts-node from the engine workspace and reads this checkout's actual publisher and shared projection source. It does not need a compiled shared package, model, API server, PostgreSQL, Redis connection or credentials. It uses in-memory database/Redis doubles and TypeScript transpile-only loading. It is not a full backend typecheck or settlement integration test.
++
++Coverage: buffered real versus RPC/NPC classification, persisted fallback, missing/invalid price, buffer read failure, malformed buffer entries, and publication identity/time. Changes to the source are exercised directly; there are no machine-specific paths or external fixture folders.
+diff -ruN '--exclude=.npmrc' a/apps/engine/src/battle/risk-terminal-regression.cjs b/apps/engine/src/battle/risk-terminal-regression.cjs
+--- a/apps/engine/src/battle/risk-terminal-regression.cjs	1970-01-01 00:00:00.000000000 +0000
++++ b/apps/engine/src/battle/risk-terminal-regression.cjs	2020-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,125 @@
++// Portable source-level regressions: real publisher/projection, in-memory I/O only.
++// Run from backend root: node --test apps/engine/src/battle/risk-terminal-regression.cjs
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const path = require('node:path');
++const vm = require('node:vm');
++const { createRequire } = require('node:module');
++const rootBackend = path.resolve(__dirname, '../../../..');
++const engineRequire = createRequire(path.join(rootBackend, 'apps/engine/package.json'));
++const ts = engineRequire('typescript');
++engineRequire('ts-node').register({
++  project: path.join(rootBackend, 'apps/engine/tsconfig.json'),
++  transpileOnly: true,
++  preferTsExts: true,
++});
++const sourceFor = () => path.join(__dirname, 'risk-terminal-tick.publisher.ts');
++const realProjection = require(path.join(rootBackend, 'packages/shared/src/payout/battle-payout.scenarios.ts'));
++const live = require(path.join(rootBackend, 'packages/shared/src/payout/battle-payout.live.ts'));
++const flags = require(path.join(rootBackend, 'packages/shared/src/events/npc-simulator.redis.ts'));
++
++function loadSource(file, mocks = {}, globals = {}) {
++  const localRequire = createRequire(file);
++  const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
++    fileName: file,
++    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021, jsx: ts.JsxEmit.React }
++  }).outputText;
++  const exports = {};
++  const context = { module: { exports }, exports, console, setTimeout, clearTimeout,
++    require: id => Object.hasOwn(mocks, id) ? mocks[id] : localRequire(id), ...globals };
++  vm.runInNewContext(code, context, { filename: file });
++  return context.module.exports;
++}
++
++async function publishFixture({ buffered = true, rpc = false, noPrice = false, failRead = false, malformed = false, invalidPrice = false } = {}) {
++  const previous = process.env.LIVE_BATTLE_REDIS_ONLY;
++  process.env.LIVE_BATTLE_REDIS_ONLY = buffered ? '1' : '0';
++  flags.invalidateNpcSimulatorActiveCache();
++  try {
++    const startTime = new Date('2026-01-01T00:00:00Z');
++    const stake = { tempStakeId: -1, id: 1, userId: 11, battleId: 42, side: 'BUY',
++      amount: rpc ? 75 : 100, entryPrice: 1, createdAtMs: startTime.getTime(), createdAt: startTime };
++    const rpcStake = { ...stake, tempStakeId: -2, id: 2, userId: 77, amount: 25 };
++    const stakes = rpc ? [stake, rpcStake] : [stake];
++    const npc = { id: 3, npcId: 9, battleId: 42, side: 'SELL', amount: 60,
++      executionPrice: 1, createdAtMs: startTime.getTime(), createdAt: startTime };
++    let listReads = 0;
++    const redis = { get: async () => '1', lrange: async key => {
++      listReads++;
++      if (failRead) throw new Error("Synthetic Redis read failure");
++      return key.endsWith(':stakes:buffer') ? [...stakes.map(row => JSON.stringify(row)), ...(malformed ? ['{', JSON.stringify({ userId: 'invalid', side: 'BUY', amount: 999 })] : [])]
++        : key.endsWith(':npc_trades:buffer') ? [JSON.stringify(npc)] : [];
++    }};
++    const db = {
++      battle: { findUnique: async () => ({ startPrice: 1, startTime, buyPot: 100, sellPot: 60, roundHigh: 1, roundLow: 1 }) },
++      stake: { findMany: async q => buffered ? [] : stakes.filter(s => !q.where.side || s.side === q.where.side) },
++      npcTrade: { groupBy: async () => buffered ? [] : [{ side: 'SELL', _sum: { amount: 60 } }],
++        findMany: async q => buffered || q.where.side !== 'SELL' ? [] : [npc] },
++      systemSetting: { findUnique: async () => null },
++      priceTick: { findMany: async () => [] },
++      rpcUser: { findMany: async () => rpc ? [{ linkedUserId: 77 }] : [] },
++    };
++    const published = [];
++    const { RiskTerminalTickPublisher } = loadSource(sourceFor('backend', 'risk-terminal-tick.publisher.ts'), {
++      '@ticktrade/shared': { ...realProjection, humanLiveProjectionOpts: live.humanLiveProjectionOpts,
++        readNpcSimulatorActiveFromRedis: flags.readNpcSimulatorActiveFromRedis },
++      '../redis/redis.client': { getSharedCommandRedis: () => redis },
++    }, { console: { ...console, warn: message => { if (!String(message).includes('Synthetic Redis read failure')) console.warn(message); } } });
++    const publisher = new RiskTerminalTickPublisher(db,
++      { get: redis.get, publish: async (channel, data) => published.push({ channel, data: JSON.parse(JSON.stringify(data)) }) },
++      { get: async () => noPrice ? null : { lastPrice: invalidPrice ? NaN : 1, roundHigh: 1, roundLow: 1, buyPot: 100, sellPot: 60 } });
++    await publisher.publish(42, 30);
++    return { published, listReads };
++  } finally {
++    if (previous === undefined) delete process.env.LIVE_BATTLE_REDIS_ONLY;
++    else process.env.LIVE_BATTLE_REDIS_ONLY = previous;
++    flags.invalidateNpcSimulatorActiveCache();
++  }
++}
++
++test('buffered real stake remains REAL in engine socket projection before PostgreSQL flush', async () => {
++  const { published, listReads } = await publishFixture();
++  assert.equal(published.length, 1);
++  assert.equal(published[0].channel, 'engine:events:risk-terminal.tick');
++  assert.equal(published[0].data.pots.real_buy, 100);
++  assert.equal(published[0].data.pots.npc_buy, 0);
++  assert.equal(published[0].data.pots.npc_sell, 60);
++  assert.equal(published[0].data.if_buy_wins.real_winner_volume, 100);
++  assert.ok(listReads > 0);
++});
++test('buffered RPC-linked stake stays outside REAL while human stake stays inside', async () => {
++  const { published } = await publishFixture({ rpc: true });
++  assert.equal(published[0].data.pots.real_buy, 75);
++  assert.equal(published[0].data.pots.npc_buy, 25);
++  assert.equal(published[0].data.if_buy_wins.real_winner_volume, 75);
++});
++test('buffering disabled retains PostgreSQL projection path', async () => {
++  const { published, listReads } = await publishFixture({ buffered: false });
++  assert.equal(published[0].data.pots.real_buy, 100);
++  assert.equal(published[0].data.pots.npc_buy, 0);
++  assert.equal(listReads, 0);
++});
++test('no live price emits no fabricated projection', async () => {
++  assert.equal((await publishFixture({ noPrice: true })).published.length, 0);
++});
++
++test('invalid live price emits no misleading projection', async () => {
++  assert.equal((await publishFixture({ invalidPrice: true })).published.length, 0);
++});
++test('Redis read failure does not silently publish a PostgreSQL-based split', async () => {
++  assert.equal((await publishFixture({ failRead: true })).published.length, 0);
++});
++test('malformed buffer entries do not invent human stake volume', async () => {
++  const { published } = await publishFixture({ malformed: true });
++  assert.equal(published[0].data.pots.real_buy, 100);
++  assert.equal(published[0].data.pots.npc_buy, 0);
++});
++test('projection retains battle identity, countdown and computation timestamp', async () => {
++  const before = Date.now();
++  const { published } = await publishFixture();
++  assert.equal(published[0].data.battle_id, 42);
++  assert.equal(published[0].data.time_remaining_seconds, 30);
++  assert.ok(published[0].data.computed_at_ms >= before);
++  assert.ok(published[0].data.computed_at_ms <= Date.now());
++});
+diff -ruN '--exclude=.npmrc' a/apps/engine/src/battle/risk-terminal-regression.spec.ts b/apps/engine/src/battle/risk-terminal-regression.spec.ts
+--- a/apps/engine/src/battle/risk-terminal-regression.spec.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/apps/engine/src/battle/risk-terminal-regression.spec.ts	2020-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,3 @@
++/** Included by the existing engine node:test recipe; no production services start. */
++require('./risk-terminal-regression.cjs');
++export {};
+diff -ruN '--exclude=.npmrc' a/apps/engine/src/battle/risk-terminal-tick.publisher.ts b/apps/engine/src/battle/risk-terminal-tick.publisher.ts
+--- a/apps/engine/src/battle/risk-terminal-tick.publisher.ts	2026-09-12 06:29:37.000000000 +0000
++++ b/apps/engine/src/battle/risk-terminal-tick.publisher.ts	2020-01-01 00:00:00.000000000 +0000
+@@ -1,5 +1,6 @@
+ import type { PrismaService } from '../prisma/prisma.service';
+ import { RedisPublisher } from '../redis/redis.publisher';
++import { getSharedCommandRedis } from '../redis/redis.client';
+ import type { MarketStateRepository } from '../market/market-state.repository';
+ import {
+     computeDualScenarioProjection,
+@@ -51,6 +52,7 @@
+                 battleId,
+                 currentPrice,
+                 humanLiveProjectionOpts(npcSimulatorActive, {
++                    redis: getSharedCommandRedis(),
+                     roundHighOverride: marketState?.roundHigh,
+                     roundLowOverride: marketState?.roundLow,
+                     livePots: marketState
+diff -ruN '--exclude=.npmrc' a/apps/engine/src/npc/npc-startup-off.regression.cjs b/apps/engine/src/npc/npc-startup-off.regression.cjs
+--- a/apps/engine/src/npc/npc-startup-off.regression.cjs	1970-01-01 00:00:00.000000000 +0000
++++ b/apps/engine/src/npc/npc-startup-off.regression.cjs	2020-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,146 @@
++// Run from backend root: node --test apps/engine/src/npc/npc-startup-off.regression.cjs
++// Loads the actual listener and shared flag policy with every I/O dependency
++// replaced in memory. No simulator implementation, trades or services execute.
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const path = require('node:path');
++const vm = require('node:vm');
++const { createRequire } = require('node:module');
++const root = path.resolve(__dirname, '../../../..');
++const engineRequire = createRequire(path.join(root, 'apps/engine/package.json'));
++const ts = engineRequire('typescript');
++
++function loadSource(file, dependencies = {}) {
++  const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
++    fileName: file,
++    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
++  }).outputText;
++  const exports = {};
++  const context = {
++    exports, module: { exports }, process: { env: {} },
++    console: { error: (...args) => { throw Error('Unexpected listener error: ' + String(args[0])); } },
++    require: name => {
++      if (!Object.hasOwn(dependencies, name)) throw Error('Unexpected dependency: ' + name);
++      return dependencies[name];
++    },
++  };
++  vm.runInNewContext(code, context, { filename: file, timeout: 1000 });
++  return context.module.exports;
++}
++
++const flags = loadSource(path.join(root, 'packages/shared/src/events/npc-simulator.redis.ts'));
++const { NpcWorkerCommandListener } = loadSource(
++  path.join(root, 'apps/npc-worker/src/npc-worker.command.listener.ts'), {
++    '@ticktrade/shared': flags,
++    '@engine/redis/redis.client': {
++      createRedisClient: () => ({}), getSharedCommandRedis: () => ({}),
++    },
++  });
++
++function fixture(raw, { active = false, leader = true, afterRead } = {}) {
++  let desired = raw;
++  const calls = { starts: 0, stops: 0, reads: 0, desiredWrites: [], heartbeats: [], published: [], startedCallbacks: 0 };
++  const simulator = {
++    isActive: () => active,
++    start: () => { calls.starts++; active = true; return true; },
++    stop: () => { calls.stops++; active = false; return true; },
++    getNpcPaceTier: () => 'normal',
++  };
++  const publisher = {
++    get: async key => {
++      assert.equal(key, flags.NPC_SIMULATOR_ACTIVE_REDIS_KEY);
++      calls.reads++;
++      const seen = desired;
++      if (afterRead) desired = afterRead(seen);
++      return seen;
++    },
++    set: async (key, value) => {
++      assert.equal(key, flags.NPC_SIMULATOR_ACTIVE_REDIS_KEY);
++      calls.desiredWrites.push([key, value]); desired = value;
++    },
++    setPx: async (key, value) => {
++      assert.notEqual(key, flags.NPC_SIMULATOR_ACTIVE_REDIS_KEY, 'heartbeat must not write operator choice');
++      calls.heartbeats.push([key, value]);
++    },
++    publish: async (channel, value) => calls.published.push({ channel, value }),
++  };
++  const listener = new NpcWorkerCommandListener(simulator, publisher, () => leader,
++    undefined, undefined, () => calls.startedCallbacks++);
++  return { listener, calls, desired: () => desired, active: () => active };
++}
++
++test('persisted OFF before startup remains OFF without start or enable write', async () => {
++  const f = fixture(flags.NPC_SIMULATOR_ACTIVE_OFF);
++  await f.listener.syncDesiredStateFromRedis('boot');
++  assert.equal(f.desired(), flags.NPC_SIMULATOR_ACTIVE_OFF);
++  assert.equal(f.calls.starts, 0);
++  assert.equal(f.calls.startedCallbacks, 0);
++  assert.equal(f.active(), false);
++  assert.deepEqual(f.calls.desiredWrites, []);
++});
++
++test('OFF on leadership startup stops an already active stub without changing the flag', async () => {
++  const f = fixture(flags.NPC_SIMULATOR_ACTIVE_OFF, { active: true });
++  await f.listener.syncDesiredStateFromRedis('boot');
++  assert.equal(f.calls.stops, 1);
++  assert.equal(f.calls.starts, 0);
++  assert.equal(f.active(), false);
++  assert.equal(f.desired(), flags.NPC_SIMULATOR_ACTIVE_OFF);
++  assert.deepEqual(f.calls.desiredWrites, []);
++});
++
++test('persisted ON starts once without rewriting the operator flag', async () => {
++  const f = fixture(flags.NPC_SIMULATOR_ACTIVE_ON);
++  await f.listener.syncDesiredStateFromRedis('boot');
++  await f.listener.syncDesiredStateFromRedis('boot');
++  assert.equal(f.calls.starts, 1);
++  assert.equal(f.calls.startedCallbacks, 1);
++  assert.equal(f.active(), true);
++  assert.equal(f.desired(), flags.NPC_SIMULATOR_ACTIVE_ON);
++  assert.deepEqual(f.calls.desiredWrites, []);
++});
++
++for (const [name, raw] of [['missing', null], ['empty', '']]) {
++  test(name + ' flag retains the existing shared default ON without persisting a new choice', async () => {
++    const f = fixture(raw);
++    assert.equal(flags.isNpcSimulatorDesiredActive(raw), true);
++    await f.listener.syncDesiredStateFromRedis('boot');
++    assert.equal(f.calls.starts, 1);
++    assert.equal(f.active(), true);
++    assert.equal(f.desired(), raw);
++    assert.deepEqual(f.calls.desiredWrites, []);
++  });
++}
++
++test('standby startup does not read, start or overwrite the operator choice', async () => {
++  const f = fixture(flags.NPC_SIMULATOR_ACTIVE_ON, { leader: false });
++  await f.listener.syncDesiredStateFromRedis('boot');
++  assert.equal(f.calls.reads, 0);
++  assert.equal(f.calls.starts, 0);
++  assert.equal(f.calls.heartbeats.length, 0);
++  assert.deepEqual(f.calls.desiredWrites, []);
++});
++
++test('poll continues to honour OFF without rewriting it', async () => {
++  const f = fixture(flags.NPC_SIMULATOR_ACTIVE_OFF, { active: true });
++  await f.listener.syncDesiredStateFromRedis('poll');
++  assert.equal(f.calls.stops, 1);
++  assert.equal(f.active(), false);
++  assert.equal(f.desired(), flags.NPC_SIMULATOR_ACTIVE_OFF);
++  assert.deepEqual(f.calls.desiredWrites, []);
++});
++
++test('operator STOP arriving after boot read is not overwritten and the next poll stops', async () => {
++  const f = fixture(null, { afterRead: () => flags.NPC_SIMULATOR_ACTIVE_OFF });
++  await f.listener.syncDesiredStateFromRedis('boot');
++  // Startup may act on its old read. This test does not claim an atomic
++  // read/start boundary: it proves the newer STOP survives and is reconciled.
++  assert.equal(f.desired(), flags.NPC_SIMULATOR_ACTIVE_OFF);
++  assert.deepEqual(f.calls.desiredWrites, []);
++  await f.listener.syncDesiredStateFromRedis('poll');
++  assert.equal(f.active(), false);
++  assert.equal(f.calls.stops, 1);
++  assert.equal(f.desired(), flags.NPC_SIMULATOR_ACTIVE_OFF);
++  assert.deepEqual(f.calls.desiredWrites, []);
++});
+diff -ruN '--exclude=.npmrc' a/apps/engine/src/npc/npc-startup-off.regression.spec.ts b/apps/engine/src/npc/npc-startup-off.regression.spec.ts
+--- a/apps/engine/src/npc/npc-startup-off.regression.spec.ts	1970-01-01 00:00:00.000000000 +0000
++++ b/apps/engine/src/npc/npc-startup-off.regression.spec.ts	2020-01-01 00:00:00.000000000 +0000
+@@ -0,0 +1,3 @@
++/** Uses the existing engine test discovery; no production services start. */
++require('./npc-startup-off.regression.cjs');
++export {};
+diff -ruN '--exclude=.npmrc' a/apps/npc-worker/src/npc-worker.command.listener.ts b/apps/npc-worker/src/npc-worker.command.listener.ts
+--- a/apps/npc-worker/src/npc-worker.command.listener.ts	2026-09-12 06:29:37.000000000 +0000
++++ b/apps/npc-worker/src/npc-worker.command.listener.ts	2020-01-01 00:00:00.000000000 +0000
+@@ -522,11 +522,10 @@
+                 NPC_SIMULATOR_ACTIVE_REDIS_KEY,
+             );
+ 
+-            // On boot: always start the NPC simulator regardless of any previously
+-            // persisted stop state. A stopped key from a prior session should not
+-            // permanently disable NPCs — only an explicit stop command sent AFTER
+-            // boot should do that.
+-            want = reason === 'boot' ? true : isNpcSimulatorDesiredActive(raw);
++            // The durable operator choice is authoritative on boot and poll.
++            // Missing/empty retains the shared default-ON policy without writing
++            // a flag that could overwrite a concurrent explicit STOP.
++            want = isNpcSimulatorDesiredActive(raw);
+ 
+             if (want && !this.npcSimulator.isActive()) {
+                 invalidateNpcSimulatorActiveCache();
+@@ -543,13 +542,6 @@
+             }
+ 
+             await this.writeWorkerHeartbeat();
+-            if (reason === 'boot' && want) {
+-                // Reset key to ON so subsequent polls see the correct state.
+-                await this.redisPublisher.set(
+-                    NPC_SIMULATOR_ACTIVE_REDIS_KEY,
+-                    NPC_SIMULATOR_ACTIVE_ON,
+-                );
+-            }
+         } catch (err) {
+             console.error('[NpcWorkerCommandListener] sync failed', err);
+         }

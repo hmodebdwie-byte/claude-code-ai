@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "baseUrl": "/home/claude/wb/backend",
+    "paths": {
+      "@ticktrade/shared": ["packages/shared/src/index.ts"],
+      "@ticktrade/shared/*": ["packages/shared/src/*"],
+      "@ticktrade/ws-contracts": ["packages/ws-contracts/src/index.ts"],
+      "@ticktrade/platform-core": ["packages/platform-core/src/index.ts"],
+      "@ticktrade/npc-intelligence": ["packages/npc-intelligence/src/index.ts"]
+    }
+  }
+}

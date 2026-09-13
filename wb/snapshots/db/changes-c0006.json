@@ -1,0 +1,1 @@
+{"id":"c0006","at":"2026-09-13T14:55:33Z","title":"Ported: eslint-plugin-react-hooks 7.0.1 → 7.1.1 (clean npm ci)","repo":"frontend","files":["package.json","package-lock.json"],"status":"applied","tests":"strict install + build passed in the local tool · re-run pending","notes":"Removes the ERESOLVE peer conflict with ESLint 10 so CI no longer needs --legacy-peer-deps."}
