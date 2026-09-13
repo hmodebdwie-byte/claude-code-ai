@@ -1,7 +1,7 @@
 From aa39f9daafea4c83ade0eba4d39860f23fa8ab2e Mon Sep 17 00:00:00 2001
 From: TickTrade Workbench <workbench@local>
 Date: Sun, 13 Sep 2026 19:14:28 +0000
-Subject: [PATCH 8/8] 3.6.1: failed Docker commands explain themselves; build
+Subject: [PATCH 8/9] 3.6.1: failed Docker commands explain themselves; build
  falls back to cached base images when the registry is unreachable
 
 ---

@@ -1,7 +1,7 @@
 From bcf8744beec26376ac8c2dc5d60ec58ee4526580 Mon Sep 17 00:00:00 2001
 From: TickTrade Workbench <workbench@local>
 Date: Sun, 13 Sep 2026 18:02:23 +0000
-Subject: [PATCH 4/8] docs: upgrade notes for 3.6.0
+Subject: [PATCH 4/9] docs: upgrade notes for 3.6.0
 
 ---
  UPGRADE-3.6.0.md | 20 ++++++++++++++++++++

@@ -1,7 +1,7 @@
 From 25593f1fad458d7c740355d416baab0e830c2b03 Mon Sep 17 00:00:00 2001
 From: TickTrade Workbench <workbench@local>
 Date: Sun, 13 Sep 2026 18:19:30 +0000
-Subject: [PATCH 5/8] =?UTF-8?q?3.6.0:=20review=20fixes=20=E2=80=94=20Studi?=
+Subject: [PATCH 5/9] =?UTF-8?q?3.6.0:=20review=20fixes=20=E2=80=94=20Studi?=
  =?UTF-8?q?o=20working=20ZIPs=20tolerate=20Finder/node=5Fmodules,=20one=20?=
  =?UTF-8?q?2=20MB=20patch=20limit,=20stray=20dev=20folders,=20model=20erro?=
  =?UTF-8?q?r=20details=20to=20the=20log,=20600=20s=20generation=20timeout,?=

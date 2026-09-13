@@ -1,7 +1,7 @@
 From dce91d3888f2275a459118028a1b66bbc2671408 Mon Sep 17 00:00:00 2001
 From: TickTrade Workbench <workbench@local>
 Date: Sun, 13 Sep 2026 18:19:42 +0000
-Subject: [PATCH 6/8] tests: lockfiles share the 2 MB per-file limit
+Subject: [PATCH 6/9] tests: lockfiles share the 2 MB per-file limit
 
 ---
  tests/test_studio_controller.cjs | 2 +-

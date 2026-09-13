@@ -1,3 +1,16 @@
+# TickTrade Intelligence Core 3.6.2
+
+- When Start fails because a container died (for example `postgres exited (1)`), the tool now reads that
+  container's log before its cleanup removes the container, shows the last lines in the job panel and under
+  Build & test output, and says what they mean: database files from another PostgreSQL version, damaged
+  database files after an unclean shutdown, a stale lock file, a full Docker disk, missing settings, a service
+  that could not reach the database, or a container that ran out of memory.
+- New **Reset local database** button (Live app & tests): removes the workspace's database volume so the next
+  Start re-creates and re-seeds it. Available only while the stack is stopped; asks for confirmation.
+- New **Free Docker space** button: removes the images, database volumes and build cache left behind by earlier
+  workspaces. Every Prepare creates a new image set of several GB and a new database volume, and nothing removed
+  them before; a full Docker disk is one reason Docker Desktop stops opening. The current workspace is kept.
+
 # TickTrade Intelligence Core 3.6.1
 
 - A failed Docker command now explains itself in the job panel: exit code, a plain-language cause when it
