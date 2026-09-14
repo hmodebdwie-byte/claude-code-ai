@@ -1,360 +1,374 @@
 [
-  {
-    "id": "c0001",
-    "at": "2026-09-13T14:35:00Z",
-    "title": "Workbench created from the developer's 12 Sep ZIPs (backend, admin, frontend)",
-    "repo": "all",
-    "status": "applied",
-    "files": [
-      "backend @ aac5eb8",
-      "admin @ 0bbf46f",
-      "frontend @ b3a2fe0"
-    ],
-    "notes": "Three git repos initialised on branch dev from the uploaded archives (byte-identical to the archives the local tool held). No code changed yet."
-  },
-  {
-    "id": "c0002",
-    "at": "2026-09-13T14:50:00Z",
-    "title": "Sandbox blocked: network access = None",
-    "repo": "all",
-    "status": "blocked",
-    "files": [],
-    "notes": "registry.npmjs.org, binaries.prisma.sh and Docker Hub return 403 host_not_allowed, so dependencies cannot be installed. Postgres 16 and Redis 7 are running locally. Waiting for the cloud environment's Network access to be set to Trusted."
-  },
-  {
-    "id": "c0003",
-    "at": "2026-09-13T14:55:33Z",
-    "title": "Ported: risk-terminal tick uses shared Redis; portable risk-terminal regression (8 checks)",
-    "repo": "backend",
-    "files": [
-      "apps/engine/src/battle/risk-terminal-tick.publisher.ts",
-      "apps/engine/src/battle/risk-terminal-regression.{cjs,spec.ts}"
-    ],
-    "status": "applied",
-    "tests": "8/8 in Docker (tool) · needs decimal.js here",
-    "notes": "Fixes buffered human stakes being counted as NPC volume on the Risk Terminal (human BUY 100 read as 0)."
-  },
-  {
-    "id": "c0004",
-    "at": "2026-09-13T14:55:33Z",
-    "title": "Ported: NPC worker honours the saved OFF flag on boot; startup regression",
-    "repo": "backend",
-    "files": [
-      "apps/npc-worker/src/npc-worker.command.listener.ts",
-      "apps/engine/src/npc/npc-startup-off.regression.{cjs,spec.ts}"
-    ],
-    "status": "applied",
-    "tests": "validated 2/8 → 8/8 by the local tool · re-run pending",
-    "notes": "Behaviour change: a persisted STOP now survives worker restarts instead of being forced back ON."
-  },
-  {
-    "id": "c0005",
-    "at": "2026-09-13T14:55:33Z",
-    "title": "Ported: Risk Terminal drops stale socket ticks; NPC status shows runningOnLeader; admin npc-risk regression (16 checks)",
-    "repo": "admin",
-    "files": [
-      "src/Pages/RiskManagementTerminal/index.jsx",
-      "src/hooks/useRiskTerminalSocket.js",
-      "src/Pages/AdminDashboard/npcSimulator.jsx",
-      "src/utils/npcRuntimeStatus.js",
-      "tests/npc-risk-regression.test.cjs"
-    ],
-    "status": "applied",
-    "tests": "validated 16/16 + Vite build by the local tool · re-run pending",
-    "notes": "'SIMULATOR ACTIVE' no longer shown when the worker is not actually running; stale ticks expire after 5 s or on disconnect."
-  },
-  {
-    "id": "c0006",
-    "at": "2026-09-13T14:55:33Z",
-    "title": "Ported: eslint-plugin-react-hooks 7.0.1 → 7.1.1 (clean npm ci)",
-    "repo": "frontend",
-    "files": [
-      "package.json",
-      "package-lock.json"
-    ],
-    "status": "applied",
-    "tests": "strict install + build passed in the local tool · re-run pending",
-    "notes": "Removes the ERESOLVE peer conflict with ESLint 10 so CI no longer needs --legacy-peer-deps."
-  },
-  {
-    "id": "c0007",
-    "at": "2026-09-13T14:55:33Z",
-    "title": "Admin login/admin redirect loop for non-admin or incomplete sessions",
-    "repo": "admin",
-    "files": [
-      "src/Pages/ProtectedRoute.jsx",
-      "src/Pages/UnauthorizedPage/index.jsx",
-      "tests/admin-auth-routing.test.cjs"
-    ],
-    "status": "applied",
-    "tests": "validated 4/12 → 12/12 by the local tool (never applied there) · re-run pending",
-    "notes": "Guard reads user/token from the auth store; non-admin and half-restored sessions land on /unauthorized, which signs out before returning to login."
-  },
-  {
-    "id": "c0008",
-    "at": "2026-09-13T14:55:33Z",
-    "title": "CI: stop printing production API/socket URLs; npm ci; admin sw.js/manifest no-cache on CDN",
-    "repo": "admin, frontend",
-    "files": [
-      ".github/workflows/admin.yml",
-      ".github/workflows/user.js.yml"
-    ],
-    "status": "applied",
-    "tests": "n/a (workflow change)",
-    "notes": "Removed both 'Temporary Debug' steps that cat .env.production and grep the secret in dist. Admin PWA updates were delayed by CDN-cached sw.js."
-  },
-  {
-    "id": "c0009",
-    "at": "2026-09-13T14:55:33Z",
-    "title": "API honours CORS_ORIGIN / WS_CORS_ORIGIN allowlists; Swagger UI off in production unless SWAGGER_ENABLED=true",
-    "repo": "backend",
-    "files": [
-      "apps/api/src/common/utlis/cors.util.ts",
-      "apps/api/src/main.ts",
-      "apps/api/src/config/env.validation.ts",
-      ".env.example",
-      "apps/api/src/common/utlis/cors.util.spec.ts"
-    ],
-    "status": "applied",
-    "tests": "new jest spec (5 cases) · run pending",
-    "notes": "Backward compatible: with the variables empty the API still reflects any origin, but warns at boot in production. Set CORS_ORIGIN=https://ticktrade.app,https://dev.ticktrade.app,… on the servers."
-  },
-  {
-    "id": "c0010",
-    "at": "2026-09-13T15:10:08Z",
-    "title": "Chat: send clears input and dismisses keyboard; sender name above message (TikTok layout)",
-    "repo": "frontend",
-    "files": [
-      "src/components/ChatInput.jsx",
-      "src/components/ChatPanel.jsx",
-      "src/components/ChatPanel.css"
-    ],
-    "status": "applied",
-    "tests": "syntax-checked (esbuild) · browser check pending",
-    "notes": "Contracted item S1. The input previously re-focused itself after send."
-  },
-  {
-    "id": "c0011",
-    "at": "2026-09-13T15:10:08Z",
-    "title": "Trade confirmation sheet honours the existing Settings toggle",
-    "repo": "frontend",
-    "files": [
-      "src/components/TradeConfirmSheet.jsx",
-      "src/components/TradeConfirmSheet.css",
-      "src/components/TradingPanel.jsx"
-    ],
-    "status": "applied",
-    "tests": "syntax-checked · browser check pending",
-    "notes": "Contracted item S3. User.tradeConfirmation was stored but never read; real-money BUY/SELL now confirm first, Free Tap unaffected."
-  },
-  {
-    "id": "c0012",
-    "at": "2026-09-13T15:10:08Z",
-    "title": "End-of-battle result pop-up off by default (build-time switch)",
-    "repo": "frontend",
-    "files": [
-      "src/core/constants.js",
-      "src/screens/Matches.jsx"
-    ],
-    "status": "applied",
-    "tests": "syntax-checked",
-    "notes": "Contracted item S2 ('disable the end-of-battle message entirely'); VITE_BATTLE_RESULT_MODAL=true restores it."
-  },
-  {
-    "id": "c0013",
-    "at": "2026-09-13T15:10:08Z",
-    "title": "Stale email tests aligned with the documented rendering/naming contract",
-    "repo": "backend",
-    "files": [
-      "packages/shared/src/email/email-events.spec.ts",
-      "apps/api/src/common/email/email-event.listener.spec.ts"
-    ],
-    "status": "verified",
-    "tests": "shared suite 187 → 184 pass / 3 fail (offline via tsx); API jest pending install",
-    "notes": "camelCase event segments allowed (password.temporarySet is a stored mapping key); HTML is master-wrapped and unresolved {{tags}} are stripped by design."
-  },
-  {
-    "id": "c0014",
-    "at": "2026-09-13T15:10:08Z",
-    "title": "Offline test mode: shared + engine suites now run here without dependencies",
-    "repo": "tools",
-    "files": [
-      "tools/wb.sh",
-      "tools/tsconfig.offline.json"
-    ],
-    "status": "verified",
-    "tests": "engine 74 ran: 62 pass / 12 fail (10 pricing + 2 suites needing decimal.js) · shared 187: 184/3",
-    "notes": "Reproduces the local tool's Docker results exactly, so pricing/hedge fixes can be iterated before the registry is unblocked."
-  },
-  {
-    "id": "c0015",
-    "at": "2026-09-13T15:36:00Z",
-    "title": "Cloud session bootstrapped from GitHub: registries reachable, three repos cloned (dev @ 12 Sep), all 12 recorded patches re-applied",
-    "repo": "all",
-    "status": "verified",
-    "files": [
-      "backend @ 01a3bbb + 4 patches",
-      "admin @ bb193b8 + 3 patches",
-      "frontend @ 81fccb9 + 5 patches"
-    ],
-    "tests": "git am 12/12 (2 needed --keep-cr)",
-    "notes": "registry.npmjs.org, binaries.prisma.sh and GitHub all reachable (network policy no longer blocks). Heads on dev are the developer's 12 Sep commits (backend 06:29, frontend 06:30, admin 06:31 UTC), i.e. the same baseline as the uploaded ZIPs. Two backend patches (npc-worker OFF flag, CORS allowlist) touch CRLF files and only apply with git am --keep-cr; bootstrap.sh now passes it."
-  },
-  {
-    "id": "c0016",
-    "at": "2026-09-13T15:40:00Z",
-    "title": "Workbench tooling fixes found while bringing the stack up on Linux",
-    "repo": "tools",
-    "status": "verified",
-    "files": [
-      "tools/wb.sh",
-      "bootstrap.sh",
-      "tools/probe.mjs"
-    ],
-    "tests": "wb install/generate/migrate/seed/build/start all green",
-    "notes": "(1) backend/.npmrc sets symlink=false (a Windows workaround); on Linux pnpm 10.28/10.33 then fails in the @prisma/engines postinstall (cannot find @prisma/debug) — wb install passes --config.symlink=true without editing the repo. (2) seed:content-templates imports @ticktrade/shared, so wb db:seed builds the shared package first. (3) tsx/playwright are resolved from `npm root -g` instead of a hard-coded home. (4) probe/smoke launch the pre-installed Chromium (/opt/pw-browsers) and stub Google Fonts, which the sandbox browser cannot reach."
-  },
-  {
-    "id": "c0017",
-    "at": "2026-09-13T15:45:00Z",
-    "title": "Full stack running with dependencies: 7/7 services up, battle engine + NPC simulator live, zero errors in service logs",
-    "repo": "all",
-    "status": "verified",
-    "files": [
-      "run/logs/*.log"
-    ],
-    "tests": "API 54/54 · engine 74/87 · shared 184/187 · admin npc-risk 16/16 · admin auth-routing 12/12",
-    "notes": "Prisma client generated, 84 migrations applied, admin + demo trader + 20 NPC fixtures seeded; api/engine/engine-worker/settlement-worker/npc-worker/frontend/admin started; battle 1 opened at 15:40:52 with two-sided NPC pots. The 16 failures are exactly the documented owner decisions: 10 pricing (D1: tests 1,7,8,9,10,18,27,28,31,38), 3 NPC protection (D3: 49 empty-side win / 50 dilution / 52 phase-2 boundary), 3 last-moment hedge (D2). The four ported fixes' regression suites (risk-terminal 8, npc-startup-off, cors 5, admin 16+12) all pass. Vite builds of frontend and admin succeed with the five/three patches applied; both repos' eslint is broken at baseline (frontend: eslint.config.js flat-config plugin format; admin: 146 pre-existing errors) — untouched."
-  },
-  {
-    "id": "c0018",
-    "at": "2026-09-13T16:05:00Z",
-    "title": "Browser smoke test (tools/browser-smoke.cjs): logged-in trading + admin flows, 14/14 checks",
-    "repo": "tools",
-    "status": "verified",
-    "files": [
-      "tools/browser-smoke.cjs",
-      "run/smoke/report.json",
-      "run/smoke/*.png"
-    ],
-    "tests": "14/14 in headless Chromium",
-    "notes": "Verified in the real app: demo login; BUY opens the trade-confirmation sheet when the Settings toggle is on and Cancel places no stake (c0011); chat send clears the input and drops focus, sender name renders above the message (c0010); admin login reaches /admin with no redirect loop, a USER-role login lands on the 403 page and 'Sign in with another account' clears the session (c0007); Risk Management Terminal and NPC Simulator tabs render. Finding: admin/src/Pages/AdminDashboard/NpcSimulator.css @imports Google Fonts; when fonts.googleapis.com is unreachable (ad-blocker, firewall, offline) the whole /admin lazy chunk fails to preload its CSS and the dashboard shows 'React Application Error'. The smoke tool stubs the font host; the product fix (move the font <link> to index.html or self-host) is proposed, not applied."
-  },
-  {
-    "id": "c0019",
-    "at": "2026-09-13T16:20:00Z",
-    "title": "Admin dashboard no longer fails when Google Fonts is unreachable: Poppins loaded from index.html, not @imported in the lazy /admin CSS",
-    "repo": "admin",
-    "status": "verified",
-    "files": [
-      "index.html",
-      "src/Pages/AdminDashboard/NpcSimulator.css",
-      "src/Pages/KycWebhookTable/index.css",
-      "src/Pages/Notfound/notfound.css",
-      "src/Pages/UnauthorizedPage/UnauthorizedPage.css",
-      "tools/checks/admin-fonts-blocked.cjs"
-    ],
-    "tests": "blocked-font browser check 2/2 · admin regressions 28/28 · Vite build",
-    "notes": "Root cause of the finding in c0018: a failed nested @import marks the route chunk's stylesheet as errored, Vite's CSS preload rejects and the ErrorBoundary replaces the whole dashboard. The font is now a top-level <link> (preconnect + stylesheet) so a blocked font host only falls back to the system font; every Poppins declaration got a real fallback stack. Verified with requests to fonts.googleapis.com aborted (Playwright route.abort): dashboard renders after login; dist CSS contains no googleapis @import. Patch: patches/admin/0004-*.patch."
-  },
-  {
-    "id": "c0020",
-    "at": "2026-09-13T18:40:00Z",
-    "title": "TickTrade Intelligence Core 3.6.0: code ZIP uploads from working folders and Finder exports, persistent error log, larger Studio patch limits, 21 review fixes",
-    "repo": "tool",
-    "status": "verified",
-    "files": [
-      "patches/tool/*.patch",
-      "patches/tool/CHANGES-3.6.0.md",
-      "patches/tool/UPGRADE-3.6.0.md"
-    ],
-    "tests": "python 562/562 · node 13/13 · API + browser upload checks",
-    "notes": "The owner's local AI tool (Python, stdlib) was uploaded as source. Reproduced its ZIP-upload failure: a ZIP that still holds node_modules (or Finder metadata) failed with 'invalid or has too many entries'. Dependency, build, VCS and Finder folders are now ignored before limits apply, on both the baseline importer and the Studio working-version extractor, with precise messages. Every swallowed exception now lands in data/logs/errors.log with the error type in the message. Four parallel code reviews (runtime/Docker, Studio/lab, imports/knowledge, models/engineering) produced 29 findings; 21 fixed with tests, 8 documented as known. Delivered as TickTrade-Intelligence-Core-3.6.0.zip with upgrade notes."
-  },
-  {
-    "id": "c0021",
-    "at": "2026-09-13T22:17:00Z",
-    "repo": "backend",
-    "status": "verified",
-    "title": "Organic NPC engine: directive-based flow, defenses A/B/C, round lock, directive settlement, admin API",
-    "files": [
-      "patches/backend/0005-*.patch",
-      "docs/NPC-ORGANIC-ENGINE.md"
-    ],
-    "tests": "shared 27/27 · engine organic 8/8 · engine suite 82/95 (13 pre-existing pricing/legacy failures unchanged) · tsc api/engine/npc-worker · workbench browser smoke 30/30 (live round with one real trader, lock at T−3000 ms, LOCKED buttons, ROUND_LOCKED, audit invariants, admin form round-trip)",
-    "notes": "Replaces the API in-transaction hedge/dominance, the npc-worker reactive bursts and the legacy simulator servo with one engine driven by a versioned settings document (55 fields with labels, ranges and applies tags). Trickle-in start, Poisson arrivals, tiers, per-round lead target, continuous steering, lock at T−lead with a sliced final injection (Lightning Dilution / Ghost Town), zero-profit cap and invariants written to npc_round_audit. ROUND_LOCKED rejection on all three validation paths. Mode switch organic/legacy is live."
-  },
-  {
-    "id": "c0022",
-    "at": "2026-09-13T22:17:00Z",
-    "repo": "admin",
-    "status": "verified",
-    "title": "NPC Simulator → Organic Engine tab (schema-driven settings, live round, round audits)",
-    "files": [
-      "patches/admin/0005-*.patch"
-    ],
-    "tests": "eslint clean on new files · vite build · workbench browser smoke 30/30 (live round with one real trader, lock at T−3000 ms, LOCKED buttons, ROUND_LOCKED, audit invariants, admin form round-trip)",
-    "notes": "Form rendered from GET /admin/npc/organic/schema; status bar with mode switch, engine heartbeat and saved/applied version; unsaved markers, inline server validation, defaults; live telemetry every second; round audit table with invariants. Legacy-only tabs labelled."
-  },
-  {
-    "id": "c0023",
-    "at": "2026-09-13T22:17:00Z",
-    "repo": "frontend",
-    "status": "verified",
-    "title": "Trading app: LOCKED buttons on battleLocked, toasts for server order rejections",
-    "files": [
-      "patches/frontend/0006-*.patch"
-    ],
-    "tests": "esbuild syntax · vite build · workbench browser smoke 30/30 (live round with one real trader, lock at T−3000 ms, LOCKED buttons, ROUND_LOCKED, audit invariants, admin form round-trip)",
-    "notes": "battleLocked → matchStore.roundLock → buttons show LOCKED and are disabled until the next round; snapshot locked/trader_count reach the store; ROUND_LOCKED / BATTLE_FROZEN / ORDER_FREEZE / LAST_SECOND_SNIPE_LOCK / throttle / insufficient balance are shown as toasts."
-  },
-  {
-    "id": "c0024",
-    "at": "2026-09-13T23:49:00Z",
-    "repo": "backend",
-    "status": "verified",
-    "title": "Market Sensitivity: exact real-trade moves, correct audit snapshot, complete live trade log, instant config push",
-    "files": [
-      "patches/backend/0006-*.patch",
-      "docs/market-sensitivity-review.md"
-    ],
-    "tests": "price-impact-deterministic.spec 8/8 · shared 219/222 · engine 82/95 (all remaining failures pre-existing) · tsc api/engine/npc-worker/settlement-worker · workbench: NPC-off trades exact at $10–$100k, push applied within 300 ms, NPC-on log separates the exact real move from NPC ticks, settlement snapshot correct",
-    "notes": "The developer's 16.6-pip reading was NPC ticks inside the measurement window; the formula is exact. Real bugs fixed: enforceImmediateDirectionalMove still applied a price-scaled hidden step to real trades whose formula move rounded to zero (up to ~1 pip); the settlement worker snapshotted default config (log/5/1) into the Price Movement Audit; the Live Trade Log missed trades dropped by the 200 ms price-tick coalescer and summed only 50 rows; saves took up to 5 s to reach the engine; audit MULTIPLIER column showed the event multiplier; replay price rounded to cents."
-  },
-  {
-    "id": "c0025",
-    "at": "2026-09-13T23:49:00Z",
-    "repo": "admin",
-    "status": "verified",
-    "title": "Market Sensitivity page: engine-exact preview, editable reference fields, formula-vs-actual live log, server-side history filters; audit page pass/fail + summary",
-    "files": [
-      "patches/admin/0006-*.patch"
-    ],
-    "tests": "eslint clean on the rewritten page · vite build · browser checks 20/20 (config seeding, both previews, quote-tick floor note, save round-trip pushed to engine, override toggle, live log columns, field/search filters, audit summary and multiplier, replay 5-decimal price)",
-    "notes": "Date Range filter did nothing and search/field filtered only the current page; Reference Amount/Pips were not editable; the audit list contained only failures so Pass Rate was meaningless."
-  },
-  {
-    "id": "c0026",
-    "at": "2026-09-14T01:12:00Z",
-    "repo": "backend",
-    "status": "verified",
-    "title": "Admin risk & inspection tools: one settlement record per round (RoundValuation) read by Risk Breaches, Battle Inspector, Price Movement Audit and Risk Terminal",
-    "files": [
-      "patches/backend/0007-*.patch"
-    ],
-    "tests": "shared 232/235 (3 pre-existing) · engine 85/97 (12 pre-existing; terminal harness 10/10 incl. legacy vs organic) · new specs round-valuation 5, directive-scenarios 3, round-context 2, price-audit-replay-hybrid 3 · tsc shared/api/engine/workers · API checks on live rounds · browser smoke 14/14 (tools/admin-tools-smoke.cjs)",
-    "notes": "Settlement (directive / legacy / tie) writes houseCashResult, shortfall, commission source, net real loser pool, real winners' profit, simulator figures and hedged users into npc_round_audit.settlement; older rounds are rebuilt on read with the model they were settled with. Risk Breaches: breach = shortfall, house cash scope, whole-period summary, resolution on rows, exact-instant ranges, ledger-based per-user PnL, RISK_BREACH alert scanner. Battle Inspector: settlement panel from the record, hedge netting by model, RPC separated, organic-aware live winner, participants per side, CANCELLED branch. Price Audit: single variance rule with swing fallback, expected path = formula for real trades + recorded NPC moves, freeze seconds stored, tick timestamps from the engine, validated status, honest CSV. Risk Terminal: tick projects with the settling model, company_net_position = house cash result, shortfall, Redis buffers for live rounds, in-flight guard, last tick served by REST, alerts endpoint. Also: roundHigh/roundLow repaired at settlement; duplicate stake ledger rows deduplicated."
-  },
-  {
-    "id": "c0027",
-    "at": "2026-09-14T01:12:00Z",
-    "repo": "admin",
-    "status": "verified",
-    "title": "Risk breaches, Battle Inspector, Price Movement Audit and Risk Management Terminal pages on the settlement record",
-    "files": [
-      "patches/admin/0007-*.patch"
-    ],
-    "tests": "eslint clean on the rewritten Risk Breaches page (other pages: only pre-existing findings) · vite build · browser smoke 14/14",
-    "notes": "Risk Breaches rewritten (presets, scope, server summary, shortfall / house cash columns, server-side Details, resolutions from the list). Battle Inspector: LIVE only on ACTIVE rows, local-day custom ranges, model / commission / house cash columns, settlement panel, participants per side. Price Audit: All Time, numeric threshold, swing marker, replay method. Terminal: model + leader, house cash / commission / shortfall per scenario, breach badges, integrity alerts, refetch on round change. Workbox precache limit raised."
-  }
+ {
+  "id": "c0001",
+  "at": "2026-09-13T14:35:00Z",
+  "title": "Workbench created from the developer's 12 Sep ZIPs (backend, admin, frontend)",
+  "repo": "all",
+  "status": "applied",
+  "files": [
+   "backend @ aac5eb8",
+   "admin @ 0bbf46f",
+   "frontend @ b3a2fe0"
+  ],
+  "notes": "Three git repos initialised on branch dev from the uploaded archives (byte-identical to the archives the local tool held). No code changed yet."
+ },
+ {
+  "id": "c0002",
+  "at": "2026-09-13T14:50:00Z",
+  "title": "Sandbox blocked: network access = None",
+  "repo": "all",
+  "status": "blocked",
+  "files": [],
+  "notes": "registry.npmjs.org, binaries.prisma.sh and Docker Hub return 403 host_not_allowed, so dependencies cannot be installed. Postgres 16 and Redis 7 are running locally. Waiting for the cloud environment's Network access to be set to Trusted."
+ },
+ {
+  "id": "c0003",
+  "at": "2026-09-13T14:55:33Z",
+  "title": "Ported: risk-terminal tick uses shared Redis; portable risk-terminal regression (8 checks)",
+  "repo": "backend",
+  "files": [
+   "apps/engine/src/battle/risk-terminal-tick.publisher.ts",
+   "apps/engine/src/battle/risk-terminal-regression.{cjs,spec.ts}"
+  ],
+  "status": "applied",
+  "tests": "8/8 in Docker (tool) · needs decimal.js here",
+  "notes": "Fixes buffered human stakes being counted as NPC volume on the Risk Terminal (human BUY 100 read as 0)."
+ },
+ {
+  "id": "c0004",
+  "at": "2026-09-13T14:55:33Z",
+  "title": "Ported: NPC worker honours the saved OFF flag on boot; startup regression",
+  "repo": "backend",
+  "files": [
+   "apps/npc-worker/src/npc-worker.command.listener.ts",
+   "apps/engine/src/npc/npc-startup-off.regression.{cjs,spec.ts}"
+  ],
+  "status": "applied",
+  "tests": "validated 2/8 → 8/8 by the local tool · re-run pending",
+  "notes": "Behaviour change: a persisted STOP now survives worker restarts instead of being forced back ON."
+ },
+ {
+  "id": "c0005",
+  "at": "2026-09-13T14:55:33Z",
+  "title": "Ported: Risk Terminal drops stale socket ticks; NPC status shows runningOnLeader; admin npc-risk regression (16 checks)",
+  "repo": "admin",
+  "files": [
+   "src/Pages/RiskManagementTerminal/index.jsx",
+   "src/hooks/useRiskTerminalSocket.js",
+   "src/Pages/AdminDashboard/npcSimulator.jsx",
+   "src/utils/npcRuntimeStatus.js",
+   "tests/npc-risk-regression.test.cjs"
+  ],
+  "status": "applied",
+  "tests": "validated 16/16 + Vite build by the local tool · re-run pending",
+  "notes": "'SIMULATOR ACTIVE' no longer shown when the worker is not actually running; stale ticks expire after 5 s or on disconnect."
+ },
+ {
+  "id": "c0006",
+  "at": "2026-09-13T14:55:33Z",
+  "title": "Ported: eslint-plugin-react-hooks 7.0.1 → 7.1.1 (clean npm ci)",
+  "repo": "frontend",
+  "files": [
+   "package.json",
+   "package-lock.json"
+  ],
+  "status": "applied",
+  "tests": "strict install + build passed in the local tool · re-run pending",
+  "notes": "Removes the ERESOLVE peer conflict with ESLint 10 so CI no longer needs --legacy-peer-deps."
+ },
+ {
+  "id": "c0007",
+  "at": "2026-09-13T14:55:33Z",
+  "title": "Admin login/admin redirect loop for non-admin or incomplete sessions",
+  "repo": "admin",
+  "files": [
+   "src/Pages/ProtectedRoute.jsx",
+   "src/Pages/UnauthorizedPage/index.jsx",
+   "tests/admin-auth-routing.test.cjs"
+  ],
+  "status": "applied",
+  "tests": "validated 4/12 → 12/12 by the local tool (never applied there) · re-run pending",
+  "notes": "Guard reads user/token from the auth store; non-admin and half-restored sessions land on /unauthorized, which signs out before returning to login."
+ },
+ {
+  "id": "c0008",
+  "at": "2026-09-13T14:55:33Z",
+  "title": "CI: stop printing production API/socket URLs; npm ci; admin sw.js/manifest no-cache on CDN",
+  "repo": "admin, frontend",
+  "files": [
+   ".github/workflows/admin.yml",
+   ".github/workflows/user.js.yml"
+  ],
+  "status": "applied",
+  "tests": "n/a (workflow change)",
+  "notes": "Removed both 'Temporary Debug' steps that cat .env.production and grep the secret in dist. Admin PWA updates were delayed by CDN-cached sw.js."
+ },
+ {
+  "id": "c0009",
+  "at": "2026-09-13T14:55:33Z",
+  "title": "API honours CORS_ORIGIN / WS_CORS_ORIGIN allowlists; Swagger UI off in production unless SWAGGER_ENABLED=true",
+  "repo": "backend",
+  "files": [
+   "apps/api/src/common/utlis/cors.util.ts",
+   "apps/api/src/main.ts",
+   "apps/api/src/config/env.validation.ts",
+   ".env.example",
+   "apps/api/src/common/utlis/cors.util.spec.ts"
+  ],
+  "status": "applied",
+  "tests": "new jest spec (5 cases) · run pending",
+  "notes": "Backward compatible: with the variables empty the API still reflects any origin, but warns at boot in production. Set CORS_ORIGIN=https://ticktrade.app,https://dev.ticktrade.app,… on the servers."
+ },
+ {
+  "id": "c0010",
+  "at": "2026-09-13T15:10:08Z",
+  "title": "Chat: send clears input and dismisses keyboard; sender name above message (TikTok layout)",
+  "repo": "frontend",
+  "files": [
+   "src/components/ChatInput.jsx",
+   "src/components/ChatPanel.jsx",
+   "src/components/ChatPanel.css"
+  ],
+  "status": "applied",
+  "tests": "syntax-checked (esbuild) · browser check pending",
+  "notes": "Contracted item S1. The input previously re-focused itself after send."
+ },
+ {
+  "id": "c0011",
+  "at": "2026-09-13T15:10:08Z",
+  "title": "Trade confirmation sheet honours the existing Settings toggle",
+  "repo": "frontend",
+  "files": [
+   "src/components/TradeConfirmSheet.jsx",
+   "src/components/TradeConfirmSheet.css",
+   "src/components/TradingPanel.jsx"
+  ],
+  "status": "applied",
+  "tests": "syntax-checked · browser check pending",
+  "notes": "Contracted item S3. User.tradeConfirmation was stored but never read; real-money BUY/SELL now confirm first, Free Tap unaffected."
+ },
+ {
+  "id": "c0012",
+  "at": "2026-09-13T15:10:08Z",
+  "title": "End-of-battle result pop-up off by default (build-time switch)",
+  "repo": "frontend",
+  "files": [
+   "src/core/constants.js",
+   "src/screens/Matches.jsx"
+  ],
+  "status": "applied",
+  "tests": "syntax-checked",
+  "notes": "Contracted item S2 ('disable the end-of-battle message entirely'); VITE_BATTLE_RESULT_MODAL=true restores it."
+ },
+ {
+  "id": "c0013",
+  "at": "2026-09-13T15:10:08Z",
+  "title": "Stale email tests aligned with the documented rendering/naming contract",
+  "repo": "backend",
+  "files": [
+   "packages/shared/src/email/email-events.spec.ts",
+   "apps/api/src/common/email/email-event.listener.spec.ts"
+  ],
+  "status": "verified",
+  "tests": "shared suite 187 → 184 pass / 3 fail (offline via tsx); API jest pending install",
+  "notes": "camelCase event segments allowed (password.temporarySet is a stored mapping key); HTML is master-wrapped and unresolved {{tags}} are stripped by design."
+ },
+ {
+  "id": "c0014",
+  "at": "2026-09-13T15:10:08Z",
+  "title": "Offline test mode: shared + engine suites now run here without dependencies",
+  "repo": "tools",
+  "files": [
+   "tools/wb.sh",
+   "tools/tsconfig.offline.json"
+  ],
+  "status": "verified",
+  "tests": "engine 74 ran: 62 pass / 12 fail (10 pricing + 2 suites needing decimal.js) · shared 187: 184/3",
+  "notes": "Reproduces the local tool's Docker results exactly, so pricing/hedge fixes can be iterated before the registry is unblocked."
+ },
+ {
+  "id": "c0015",
+  "at": "2026-09-13T15:36:00Z",
+  "title": "Cloud session bootstrapped from GitHub: registries reachable, three repos cloned (dev @ 12 Sep), all 12 recorded patches re-applied",
+  "repo": "all",
+  "status": "verified",
+  "files": [
+   "backend @ 01a3bbb + 4 patches",
+   "admin @ bb193b8 + 3 patches",
+   "frontend @ 81fccb9 + 5 patches"
+  ],
+  "tests": "git am 12/12 (2 needed --keep-cr)",
+  "notes": "registry.npmjs.org, binaries.prisma.sh and GitHub all reachable (network policy no longer blocks). Heads on dev are the developer's 12 Sep commits (backend 06:29, frontend 06:30, admin 06:31 UTC), i.e. the same baseline as the uploaded ZIPs. Two backend patches (npc-worker OFF flag, CORS allowlist) touch CRLF files and only apply with git am --keep-cr; bootstrap.sh now passes it."
+ },
+ {
+  "id": "c0016",
+  "at": "2026-09-13T15:40:00Z",
+  "title": "Workbench tooling fixes found while bringing the stack up on Linux",
+  "repo": "tools",
+  "status": "verified",
+  "files": [
+   "tools/wb.sh",
+   "bootstrap.sh",
+   "tools/probe.mjs"
+  ],
+  "tests": "wb install/generate/migrate/seed/build/start all green",
+  "notes": "(1) backend/.npmrc sets symlink=false (a Windows workaround); on Linux pnpm 10.28/10.33 then fails in the @prisma/engines postinstall (cannot find @prisma/debug) — wb install passes --config.symlink=true without editing the repo. (2) seed:content-templates imports @ticktrade/shared, so wb db:seed builds the shared package first. (3) tsx/playwright are resolved from `npm root -g` instead of a hard-coded home. (4) probe/smoke launch the pre-installed Chromium (/opt/pw-browsers) and stub Google Fonts, which the sandbox browser cannot reach."
+ },
+ {
+  "id": "c0017",
+  "at": "2026-09-13T15:45:00Z",
+  "title": "Full stack running with dependencies: 7/7 services up, battle engine + NPC simulator live, zero errors in service logs",
+  "repo": "all",
+  "status": "verified",
+  "files": [
+   "run/logs/*.log"
+  ],
+  "tests": "API 54/54 · engine 74/87 · shared 184/187 · admin npc-risk 16/16 · admin auth-routing 12/12",
+  "notes": "Prisma client generated, 84 migrations applied, admin + demo trader + 20 NPC fixtures seeded; api/engine/engine-worker/settlement-worker/npc-worker/frontend/admin started; battle 1 opened at 15:40:52 with two-sided NPC pots. The 16 failures are exactly the documented owner decisions: 10 pricing (D1: tests 1,7,8,9,10,18,27,28,31,38), 3 NPC protection (D3: 49 empty-side win / 50 dilution / 52 phase-2 boundary), 3 last-moment hedge (D2). The four ported fixes' regression suites (risk-terminal 8, npc-startup-off, cors 5, admin 16+12) all pass. Vite builds of frontend and admin succeed with the five/three patches applied; both repos' eslint is broken at baseline (frontend: eslint.config.js flat-config plugin format; admin: 146 pre-existing errors) — untouched."
+ },
+ {
+  "id": "c0018",
+  "at": "2026-09-13T16:05:00Z",
+  "title": "Browser smoke test (tools/browser-smoke.cjs): logged-in trading + admin flows, 14/14 checks",
+  "repo": "tools",
+  "status": "verified",
+  "files": [
+   "tools/browser-smoke.cjs",
+   "run/smoke/report.json",
+   "run/smoke/*.png"
+  ],
+  "tests": "14/14 in headless Chromium",
+  "notes": "Verified in the real app: demo login; BUY opens the trade-confirmation sheet when the Settings toggle is on and Cancel places no stake (c0011); chat send clears the input and drops focus, sender name renders above the message (c0010); admin login reaches /admin with no redirect loop, a USER-role login lands on the 403 page and 'Sign in with another account' clears the session (c0007); Risk Management Terminal and NPC Simulator tabs render. Finding: admin/src/Pages/AdminDashboard/NpcSimulator.css @imports Google Fonts; when fonts.googleapis.com is unreachable (ad-blocker, firewall, offline) the whole /admin lazy chunk fails to preload its CSS and the dashboard shows 'React Application Error'. The smoke tool stubs the font host; the product fix (move the font <link> to index.html or self-host) is proposed, not applied."
+ },
+ {
+  "id": "c0019",
+  "at": "2026-09-13T16:20:00Z",
+  "title": "Admin dashboard no longer fails when Google Fonts is unreachable: Poppins loaded from index.html, not @imported in the lazy /admin CSS",
+  "repo": "admin",
+  "status": "verified",
+  "files": [
+   "index.html",
+   "src/Pages/AdminDashboard/NpcSimulator.css",
+   "src/Pages/KycWebhookTable/index.css",
+   "src/Pages/Notfound/notfound.css",
+   "src/Pages/UnauthorizedPage/UnauthorizedPage.css",
+   "tools/checks/admin-fonts-blocked.cjs"
+  ],
+  "tests": "blocked-font browser check 2/2 · admin regressions 28/28 · Vite build",
+  "notes": "Root cause of the finding in c0018: a failed nested @import marks the route chunk's stylesheet as errored, Vite's CSS preload rejects and the ErrorBoundary replaces the whole dashboard. The font is now a top-level <link> (preconnect + stylesheet) so a blocked font host only falls back to the system font; every Poppins declaration got a real fallback stack. Verified with requests to fonts.googleapis.com aborted (Playwright route.abort): dashboard renders after login; dist CSS contains no googleapis @import. Patch: patches/admin/0004-*.patch."
+ },
+ {
+  "id": "c0020",
+  "at": "2026-09-13T18:40:00Z",
+  "title": "TickTrade Intelligence Core 3.6.0: code ZIP uploads from working folders and Finder exports, persistent error log, larger Studio patch limits, 21 review fixes",
+  "repo": "tool",
+  "status": "verified",
+  "files": [
+   "patches/tool/*.patch",
+   "patches/tool/CHANGES-3.6.0.md",
+   "patches/tool/UPGRADE-3.6.0.md"
+  ],
+  "tests": "python 562/562 · node 13/13 · API + browser upload checks",
+  "notes": "The owner's local AI tool (Python, stdlib) was uploaded as source. Reproduced its ZIP-upload failure: a ZIP that still holds node_modules (or Finder metadata) failed with 'invalid or has too many entries'. Dependency, build, VCS and Finder folders are now ignored before limits apply, on both the baseline importer and the Studio working-version extractor, with precise messages. Every swallowed exception now lands in data/logs/errors.log with the error type in the message. Four parallel code reviews (runtime/Docker, Studio/lab, imports/knowledge, models/engineering) produced 29 findings; 21 fixed with tests, 8 documented as known. Delivered as TickTrade-Intelligence-Core-3.6.0.zip with upgrade notes."
+ },
+ {
+  "id": "c0021",
+  "at": "2026-09-13T22:17:00Z",
+  "repo": "backend",
+  "status": "verified",
+  "title": "Organic NPC engine: directive-based flow, defenses A/B/C, round lock, directive settlement, admin API",
+  "files": [
+   "patches/backend/0005-*.patch",
+   "docs/NPC-ORGANIC-ENGINE.md"
+  ],
+  "tests": "shared 27/27 · engine organic 8/8 · engine suite 82/95 (13 pre-existing pricing/legacy failures unchanged) · tsc api/engine/npc-worker · workbench browser smoke 30/30 (live round with one real trader, lock at T−3000 ms, LOCKED buttons, ROUND_LOCKED, audit invariants, admin form round-trip)",
+  "notes": "Replaces the API in-transaction hedge/dominance, the npc-worker reactive bursts and the legacy simulator servo with one engine driven by a versioned settings document (55 fields with labels, ranges and applies tags). Trickle-in start, Poisson arrivals, tiers, per-round lead target, continuous steering, lock at T−lead with a sliced final injection (Lightning Dilution / Ghost Town), zero-profit cap and invariants written to npc_round_audit. ROUND_LOCKED rejection on all three validation paths. Mode switch organic/legacy is live."
+ },
+ {
+  "id": "c0022",
+  "at": "2026-09-13T22:17:00Z",
+  "repo": "admin",
+  "status": "verified",
+  "title": "NPC Simulator → Organic Engine tab (schema-driven settings, live round, round audits)",
+  "files": [
+   "patches/admin/0005-*.patch"
+  ],
+  "tests": "eslint clean on new files · vite build · workbench browser smoke 30/30 (live round with one real trader, lock at T−3000 ms, LOCKED buttons, ROUND_LOCKED, audit invariants, admin form round-trip)",
+  "notes": "Form rendered from GET /admin/npc/organic/schema; status bar with mode switch, engine heartbeat and saved/applied version; unsaved markers, inline server validation, defaults; live telemetry every second; round audit table with invariants. Legacy-only tabs labelled."
+ },
+ {
+  "id": "c0023",
+  "at": "2026-09-13T22:17:00Z",
+  "repo": "frontend",
+  "status": "verified",
+  "title": "Trading app: LOCKED buttons on battleLocked, toasts for server order rejections",
+  "files": [
+   "patches/frontend/0006-*.patch"
+  ],
+  "tests": "esbuild syntax · vite build · workbench browser smoke 30/30 (live round with one real trader, lock at T−3000 ms, LOCKED buttons, ROUND_LOCKED, audit invariants, admin form round-trip)",
+  "notes": "battleLocked → matchStore.roundLock → buttons show LOCKED and are disabled until the next round; snapshot locked/trader_count reach the store; ROUND_LOCKED / BATTLE_FROZEN / ORDER_FREEZE / LAST_SECOND_SNIPE_LOCK / throttle / insufficient balance are shown as toasts."
+ },
+ {
+  "id": "c0024",
+  "at": "2026-09-13T23:49:00Z",
+  "repo": "backend",
+  "status": "verified",
+  "title": "Market Sensitivity: exact real-trade moves, correct audit snapshot, complete live trade log, instant config push",
+  "files": [
+   "patches/backend/0006-*.patch",
+   "docs/market-sensitivity-review.md"
+  ],
+  "tests": "price-impact-deterministic.spec 8/8 · shared 219/222 · engine 82/95 (all remaining failures pre-existing) · tsc api/engine/npc-worker/settlement-worker · workbench: NPC-off trades exact at $10–$100k, push applied within 300 ms, NPC-on log separates the exact real move from NPC ticks, settlement snapshot correct",
+  "notes": "The developer's 16.6-pip reading was NPC ticks inside the measurement window; the formula is exact. Real bugs fixed: enforceImmediateDirectionalMove still applied a price-scaled hidden step to real trades whose formula move rounded to zero (up to ~1 pip); the settlement worker snapshotted default config (log/5/1) into the Price Movement Audit; the Live Trade Log missed trades dropped by the 200 ms price-tick coalescer and summed only 50 rows; saves took up to 5 s to reach the engine; audit MULTIPLIER column showed the event multiplier; replay price rounded to cents."
+ },
+ {
+  "id": "c0025",
+  "at": "2026-09-13T23:49:00Z",
+  "repo": "admin",
+  "status": "verified",
+  "title": "Market Sensitivity page: engine-exact preview, editable reference fields, formula-vs-actual live log, server-side history filters; audit page pass/fail + summary",
+  "files": [
+   "patches/admin/0006-*.patch"
+  ],
+  "tests": "eslint clean on the rewritten page · vite build · browser checks 20/20 (config seeding, both previews, quote-tick floor note, save round-trip pushed to engine, override toggle, live log columns, field/search filters, audit summary and multiplier, replay 5-decimal price)",
+  "notes": "Date Range filter did nothing and search/field filtered only the current page; Reference Amount/Pips were not editable; the audit list contained only failures so Pass Rate was meaningless."
+ },
+ {
+  "id": "c0026",
+  "at": "2026-09-14T01:12:00Z",
+  "repo": "backend",
+  "status": "verified",
+  "title": "Admin risk & inspection tools: one settlement record per round (RoundValuation) read by Risk Breaches, Battle Inspector, Price Movement Audit and Risk Terminal",
+  "files": [
+   "patches/backend/0007-*.patch"
+  ],
+  "tests": "shared 232/235 (3 pre-existing) · engine 85/97 (12 pre-existing; terminal harness 10/10 incl. legacy vs organic) · new specs round-valuation 5, directive-scenarios 3, round-context 2, price-audit-replay-hybrid 3 · tsc shared/api/engine/workers · API checks on live rounds · browser smoke 14/14 (tools/admin-tools-smoke.cjs)",
+  "notes": "Settlement (directive / legacy / tie) writes houseCashResult, shortfall, commission source, net real loser pool, real winners' profit, simulator figures and hedged users into npc_round_audit.settlement; older rounds are rebuilt on read with the model they were settled with. Risk Breaches: breach = shortfall, house cash scope, whole-period summary, resolution on rows, exact-instant ranges, ledger-based per-user PnL, RISK_BREACH alert scanner. Battle Inspector: settlement panel from the record, hedge netting by model, RPC separated, organic-aware live winner, participants per side, CANCELLED branch. Price Audit: single variance rule with swing fallback, expected path = formula for real trades + recorded NPC moves, freeze seconds stored, tick timestamps from the engine, validated status, honest CSV. Risk Terminal: tick projects with the settling model, company_net_position = house cash result, shortfall, Redis buffers for live rounds, in-flight guard, last tick served by REST, alerts endpoint. Also: roundHigh/roundLow repaired at settlement; duplicate stake ledger rows deduplicated."
+ },
+ {
+  "id": "c0027",
+  "at": "2026-09-14T01:12:00Z",
+  "repo": "admin",
+  "status": "verified",
+  "title": "Risk breaches, Battle Inspector, Price Movement Audit and Risk Management Terminal pages on the settlement record",
+  "files": [
+   "patches/admin/0007-*.patch"
+  ],
+  "tests": "eslint clean on the rewritten Risk Breaches page (other pages: only pre-existing findings) · vite build · browser smoke 14/14",
+  "notes": "Risk Breaches rewritten (presets, scope, server summary, shortfall / house cash columns, server-side Details, resolutions from the list). Battle Inspector: LIVE only on ACTIVE rows, local-day custom ranges, model / commission / house cash columns, settlement panel, participants per side. Price Audit: All Time, numeric threshold, swing marker, replay method. Terminal: model + leader, house cash / commission / shortfall per scenario, breach badges, integrity alerts, refetch on round change. Workbox precache limit raised."
+ },
+ {
+  "id": "c0028",
+  "at": "2026-09-14T18:55:00Z",
+  "repo": "all",
+  "status": "in_progress",
+  "title": "Stabilisation drop (WIP): continuous chart stream, engine stability, partial NPC/trade-path work; handoff bundle",
+  "files": [
+   "patches/backend/0008-*.patch",
+   "patches/frontend/0007-*.patch",
+   "docs/handoff-2026-09-14/"
+  ],
+  "tests": "shared 266/269 (3 pre-existing) · engine 119/131 (12 pre-existing) · api jest 78/78 · frontend node --test 63/63 · vite builds clean · not runtime-verified",
+  "notes": "Interrupted by session limits. Done: A chart-api, B chart-pwa, C pwa-panel, D engine. Partial: E npc, F api-core. Not started: G admin UI, wave-2 useWebSocket.js edits, integration, review, final PDF. Exact continuation steps in docs/handoff-2026-09-14/HANDOFF.md."
+ }
 ]

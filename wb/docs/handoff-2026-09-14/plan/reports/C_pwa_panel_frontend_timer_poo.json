@@ -1,0 +1,151 @@
+{
+ "area": "C. pwa-panel (frontend timer, pool bar, estimator fetch loops, shell perf, resume snapshot hygiene, vite/PWA config)",
+ "files_changed": [
+  {
+   "path": "/home/claude/wb/frontend/src/live/utils/timerCountdownAnchor.js",
+   "summary": "NEW pure module (contract C2): deriveRemainingFromAnchor, reanchorFromServerFrame (snap when |server-local| >= 1 s, keep local phase otherwise, always re-anchor on battle change), msUntilNextLocalTick (phase-aligned 1 Hz), applyRemainingToTimer (keeps server fields, recomputes time_elapsed/percentage_complete)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/utils/timerCountdownAnchor.test.js",
+   "summary": "NEW node --test spec: fresh anchor, 1 Hz countdown + clamp at 0, keep-phase vs snap, server 0 wins over local >0 (trade gate), battle change re-anchor, fractional/negative input, phase-aligned tick delay, elapsed/percentage recompute."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/stores/matchStore.js",
+   "summary": "Timer part only: new `timerAnchor` state; setTimer re-anchors from each server frame and starts/stops a module-level phase-aligned setTimeout ticker that decrements `timer.time_remaining` locally at 1 Hz (never counts up, stops at 0); anchor cleared + ticker stopped in setTimer(null), runBattleAtomicReset and resetMatchState; visibilitychange->visible re-derives immediately."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/hooks/useBattleCountdown.js",
+   "summary": "Doc-comment update only: the hook stays a pure formatter; the local ticking lives in the store (C2)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/utils/realtimeEventGuards.js",
+   "summary": "isOutOfOrder gains per-key backward tolerance (timerUpdate: 2000 ms, configurable via createRealtimeEventGuard({backwardToleranceMsByKey})) — audit T9; isActiveBattlePayload now ACCEPTS payloads when the client has no battle id (audit T10 / C2) instead of requiring a null payload id."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/utils/realtimeEventGuards.test.js",
+   "summary": "NEW spec: 2 s skew tolerance with kept watermark, strict ordering for other keys, configurable tolerance + seconds normalisation, future-skew rejection/clear, null-active acceptance, normalizeSocketTimerUpdate flooring."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/utils/requestThrottle.js",
+   "summary": "NEW pure helpers: planDispatch (leading+trailing throttle with forceNow and minTrailingDelay), potSignatureOf (each side quantised to 0.5 % of total pot + 5 % log bucket on total), priceSideOf (verdict side of the price signature)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/utils/requestThrottle.test.js",
+   "summary": "NEW spec for the throttle plan, pot quantisation (ignores sub-0.5 % churn, tracks real moves and ~5 % growth, stable on empty pots) and side extraction."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/hooks/useMarketFlip.js",
+   "summary": "Rewritten fetch loop (audit E1): requestId per DISPATCH, leading+trailing 750 ms throttle, immediate dispatch on verdict-side change, pending trailing dispatch survives dependency changes (no cleanup-clear = no starvation), abort+invalidate on battle change / disable."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/hooks/useWinEstimate.js",
+   "summary": "Same requestId-per-dispatch fix; <= 1 req/s leading+trailing throttle with a 200 ms minimum trailing delay for keystrokes; trailing dispatch reads latest battleId/amount from a ref updated in an effect."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/components/WinEstimatorSheet.jsx",
+   "summary": "potSignature now potSignatureOf(buyPot, sellPot) (0.5 % quantisation); VERDICT_DAMP_MS 1500 -> 300."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/components/TradingPanel.jsx",
+   "summary": "Pool bar (audit B1/P1): $ labels moved out of the clamped fills into the track as absolutely positioned children; a layout effect measures label widths (only when the formatted labels change) and widens --min-pos/--max-pos so the dot never covers digits; the smoothing rAF loop is started from the sellPercent effect and stops itself when converged, writes --sell-percent only when the value changed."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/components/TradingPanel.css",
+   "summary": ".progress-sell/.progress-buy become pure colour fills (padding/flex removed); new `.progress-bar-track > .progress-label` absolute rules (z-index 10 above the dot, pointer-events none, text-shadow), .progress-label-sell left:12px, .progress-label-buy right:12px."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/telemetry/realtimeTelemetry.js",
+   "summary": "startDroppedFrameMonitor is a no-op unless import.meta.env.DEV, window.__TT_FRAME_MONITOR__ === true, or {force:true} (audit P1/F5)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/components/ResumeSyncBridge.jsx",
+   "summary": "Match-slice persistence now goes through the 750 ms trailing throttle; `price`/`timer` removed from the trigger slice (price read at flush time, timer never persisted); flush immediately on visibilitychange->hidden and pagehide; skips persisting when not authenticated; writes `userId`; no candle mirror (C1)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/stores/appResumeStore.js",
+   "summary": "Snapshot carries `userId`; resolveResumeUserId() (localStorage user record) and isResumeSnapshotForAnotherUser(); onRehydrateStorage ignores + clears a snapshot written for another user (audit F9); clearSnapshot resets to initialState."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/stores/authStore.js",
+   "summary": "logout() now calls appResumeStore.clearSnapshot() and clearSessionResumeState() after the existing resets."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/utils/clearStorageOnLoginRedirect.js",
+   "summary": "New exported SESSION_RESUME_KEYS + clearSessionResumeState() (removes app-resume-snapshot, ticktrade-resume, ticktrade:sessionBattleId, tt_linechart_candleClosed_session_v1 from sessionStorage); clearStorageOnRedirectToLogin() calls it. Literal keys on purpose (imported by the axios interceptor — no store imports)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/socketHealthService.js",
+   "summary": "Stale watchdog (audit P3): 12 s threshold floor + 0-4 s jitter (resolveStaleThresholdMs), cheap `ping` ack probe (probeSocket, 2.5 s timeout) before reconnect; onAlive callback when the probe acks or data arrived meanwhile; document.hidden guard made SSR-safe; stop() flag prevents late callbacks."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/socketHealthService.test.js",
+   "summary": "NEW spec: threshold floor/jitter, probeSocket ack/timeout/fallback shapes, watchdog alive-vs-reconnect decisions, data-arrived-during-probe, healthy never probes."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/components/PriceBadge.jsx",
+   "summary": "lineChartStore selector returns the last close as a number (or null) instead of the candle object, so the badge re-renders only when the close changes (audit F10)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/vite.config.js",
+   "summary": "Workbox: CacheFirst for same-origin /assets/* (hashed, immutable), NetworkFirst kept for icons/sounds/manifest/woff2; precache list extended with the arena path (index/App/AppShell js+css, router, zustand, axios, socket, lightweight-charts, MainLayout, Matches, MatchesChatSection, NewChart, ChartData, Trading, WinEstimatorSheet, hooks, useBattleCountdown, useVisiblePots); `build.esbuildOptions` (ignored by Vite) moved to top-level `esbuild: { drop, pure }` so console.* is really stripped."
+  }
+ ],
+ "behaviour_changes": [
+  "Battle countdown ticks locally at 1 Hz between server timerUpdate frames (anchored to the last frame; server frames re-anchor, snapping when they differ by >= 1 s). A late/dropped frame no longer freezes the digits; the local clock only counts DOWN and stops at 0; server 0 always wins.",
+  "Timer/price payloads are accepted while the client has no battle id (isActiveBattlePayload returns true for activeBattleId == null); useWebSocket must adopt battle_id from the tick (request to pwa-shell) for the T10 fix to be complete.",
+  "timerUpdate frames up to 2 s older than the last seen timestamp are accepted (clock skew between API host and engine host); other events keep strict ordering.",
+  "Market Flip: fetches at most every 750 ms (leading+trailing), fires immediately when the price crosses the round price, pot changes below 0.5 % of the total pot no longer retrigger, responses are only discarded when a newer request was actually sent, verdict damper 300 ms (was 1500).",
+  "Scenario estimate: <= 1 POST /battle/estimate-payout per second per open sheet (was up to 2-4/s); same requestId fix.",
+  "Pool bar: both $ labels are always fully visible (absolute children of the track above the dot); the fill clamp widens to the measured label width so the dot never sits on the digits (fallback 13 %/87 % unchanged). Smoothing rAF stops when converged instead of running at 60 fps for the whole round.",
+  "Dropped-frame telemetry rAF loop no longer runs in production (DEV or explicit opt-in only).",
+  "Resume snapshot is written at most every 750 ms (plus an immediate flush on hide/pagehide) instead of on every price tick; price/timer are no longer triggers; timer is never persisted; candles never persisted.",
+  "Resume snapshot is bound to the user id: cleared on logout and on every auth-redirect path (401, guest error, login page), and ignored+cleared on boot if it belongs to another account.",
+  "Stale-socket watchdog: threshold floor 12 s + 0-4 s jitter (call-site values below the floor are raised), and a cheap `ping` ack probe runs before any forced reconnect; a socket that answers is left alone (onAlive). Until the backend adds the `ping` handler the probe times out after 2.5 s and the old reconnect happens (later and jittered).",
+  "PriceBadge re-renders only when the last chart close changes.",
+  "Service worker: hashed /assets/* served CacheFirst, arena chunks precached (38 entries, ~1.2 MB); console.log/warn/info/debug are stripped from production bundles (verified: 0 occurrences of the previously leaked warn string in dist)."
+ ],
+ "new_settings_env": [
+  "window.__TT_FRAME_MONITOR__ = true (browser console, runtime-only debug switch): enables the dropped-frame rAF monitor in production builds; default off. No new build-time env vars."
+ ],
+ "tests_added": [
+  "/home/claude/wb/frontend/src/live/utils/timerCountdownAnchor.test.js (11 tests) — local countdown, snap/keep-phase, server-0 precedence, battle change, tick alignment, elapsed/percentage recompute",
+  "/home/claude/wb/frontend/src/live/utils/realtimeEventGuards.test.js (7 tests) — 2 s timer skew tolerance, strict ordering elsewhere, null-active acceptance, normaliser",
+  "/home/claude/wb/frontend/src/live/utils/requestThrottle.test.js (9 tests) — leading/trailing/none/forceNow/minTrailing decisions, pot quantisation, price side",
+  "/home/claude/wb/frontend/src/live/services/socketHealthService.test.js (8 tests) — threshold floor + jitter, probe shapes, alive-vs-reconnect, data-during-probe, healthy never probes"
+ ],
+ "verification": "cd /home/claude/wb/frontend && node --test \\\"src/**/*.test.js\\\" → 63 tests, 63 pass, 0 fail (28 pre-existing chart tests from agent B + 35 new). `npx vite build` → built in ~6 s, no errors, no circular-import warnings; PWA precache 38 entries (1219 KiB); dist/sw.js contains one CacheFirst (assets), one NetworkFirst (icons/sounds/manifest), one NetworkOnly (navigations); `grep -c 'balanceEquityAndPnL ignored' dist/assets/App-*.js` = 0 (console stripping now effective). ESLint (ESLint 10 + react-hooks 7 flat config; the repo's eslint.config.js crashes on every file, so a temporary equivalent flat config was used and deleted afterwards): message counts per touched file are equal to or lower than the committed versions — matchStore 3/3, authStore 57/57 (all pre-existing `preserve-caught-error`), TradingPanel 6/6, WinEstimatorSheet 4/4, ResumeSyncBridge 5→3, useMarketFlip 2/2, useWinEstimate 2/2 (pre-existing `set-state-in-effect`), clearStorageOnLoginRedirect 1→0, all new files 0. Runtime: read-only only in this wave (the running PWA is the old build); backend confirmed to have no `ping` @SubscribeMessage handler yet (request to api-core below).",
+ "requests_for_other_agents": [
+  {
+   "agent": "pwa-shell",
+   "file": "/home/claude/wb/frontend/src/utils/useWebSocket.js",
+   "change": "T10 / C2 timer adoption in onTimerUpdate (currently ~lines 927-960). After `const payloadBattleId = timerPayload.battle_id;` and BEFORE the `isActiveBattlePayload` check insert:\n```js\n      // C2/T10: adopt a newer round from the timer stream instead of dropping every tick until\n      // the first battleSnapshot/newBattleStarted lands (digits sat at 00:00 for the first seconds).\n      const cooldownActiveNow = matchStore.getState().cooldownDisplay?.active === true;\n      if (\n        !cooldownActiveNow &&\n        payloadBattleId != null &&\n        (battleIdRef.current == null || Number(payloadBattleId) > Number(battleIdRef.current))\n      ) {\n        battleIdRef.current = Number(payloadBattleId);\n        writeSessionBattleId(battleIdRef.current);\n        if (matchStore.getState().battleId == null) {\n          matchStore.getState().setBattleId(battleIdRef.current);\n        }\n      }\n```\n(`writeSessionBattleId` is exported from src/utils/sessionBattleId.js; import it next to `clearSessionBattleId`.) Keep the existing cooldown branch unchanged. Note `isActiveBattlePayload` (realtimeEventGuards.js) now returns true when `battleIdRef.current == null`, so no other change is needed for the guard."
+  },
+  {
+   "agent": "pwa-shell",
+   "file": "/home/claude/wb/frontend/src/utils/useWebSocket.js",
+   "change": "Watchdog call site (~lines 1420-1443). Replace the option values with:\n```js\n      onStale: () => {\n        realtimeTelemetry.incrementEventRate(\"socket.watchdog.onStale\");\n        forceReconnectAndSync();\n        forceLineChartSync();\n      },\n      // Socket answered the ping (or data arrived meanwhile): alive but quiet — resync, do not reconnect.\n      onAlive: () => {\n        realtimeTelemetry.incrementEventRate(\"socket.watchdog.onAlive\");\n        forceLineChartSync();\n      },\n      intervalMs: 3000,\n      // Audit P3: 12 s floor + 0-4 s jitter is enforced inside socketHealthService; these are the requested values.\n      staleThresholdMs: 12000,\n      requiredConsecutiveStaleChecks: 2,\n      minRecoveryGapMs: 15000,\n```\n(remove the old `staleThresholdMs: 5000 + Math.floor(Math.random() * 1000)` and `intervalMs: 2000`). The service already raises any lower threshold to the floor, so the app is safe if this edit lands later."
+  },
+  {
+   "agent": "pwa-shell",
+   "file": "/home/claude/wb/frontend/src/utils/useWebSocket.js",
+   "change": "Single foreground sync path (audit F2, wave-2 item). ResumeSyncBridge keeps its useRealtimeSync/useAppLifecycle foreground call (it has the FOREGROUND_SYNC_THRESHOLD_MS gating). In the effect at ~lines 403-429 delete the `focus`, `pageshow` and `visibilitychange` listeners (and `syncOnForeground`), keep ONLY the `online` listener:\n```js\n  useEffect(() => {\n    if (!authToken) return undefined;\n    // Foreground/resume syncs are owned by ResumeSyncBridge (one path); only connectivity here.\n    const syncOnOnline = () => {\n      syncNow({ force: true, source: \"online\" });\n    };\n    window.addEventListener(\"online\", syncOnOnline);\n    return () => window.removeEventListener(\"online\", syncOnOnline);\n  }, [authToken, syncNow]);\n```\nand in `syncNow` make the dedupe apply to forced calls too: replace `if (!force && now - lastManualSyncAtRef.current < 500) return;` with\n```js\n    const dedupeMs = force ? 1000 : 500;\n    if (now - lastManualSyncAtRef.current < dedupeMs) return;\n```"
+  },
+  {
+   "agent": "pwa-shell",
+   "file": "/home/claude/wb/frontend/src/utils/useWebSocket.js",
+   "change": "No change needed for `realtimeTelemetry.startDroppedFrameMonitor()` at ~line 454 — it is now a no-op in production builds (DEV / window.__TT_FRAME_MONITOR__ only). Leave the call."
+  },
+  {
+   "agent": "api-core",
+   "file": "/home/claude/wb/backend/apps/api/src/ws/ws.gateway.ts",
+   "change": "Add a cheap ack-only `ping` handler so the client stale-watchdog can distinguish 'alive but quiet' from 'dead' before reconnecting (audit P3). Exclude it from the per-socket rate-limit buckets and do not log it:\n```ts\n  /** Client stale-watchdog liveness probe (frontend socketHealthService.probeSocket). Ack only. */\n  @SubscribeMessage('ping')\n  handlePing(): { ok: true; server_time: number } {\n    return { ok: true, server_time: Date.now() };\n  }\n```\n(Nest passes the returned value to the socket.io ack callback the client supplies via `socket.timeout(2500).emit('ping', cb)`.) Until this exists the client probe times out after 2.5 s and falls back to the old reconnect."
+  }
+ ],
+ "unfinished": [
+  "T10 battle-id adoption inside useWebSocket.js (guard side is done; the adoption edit is listed for pwa-shell — without it, ticks are accepted only when battleIdRef is null, not when it still holds the previous round's id).",
+  "Watchdog call-site values and onAlive wiring in useWebSocket.js (service enforces the 12 s floor + jitter regardless; onAlive is a no-op until wired).",
+  "Backend `ping` ack handler (request to api-core); without it the probe degrades to the previous reconnect behaviour.",
+  "src/live/services/timerCooldownTransitionService.js was reviewed and left unchanged — its setTimer(null)/runBattleAtomicReset calls already stop the new local ticker and clear the anchor; no edit was required."
+ ],
+ "notes_for_pdf": "Scope of this change set: the trading-panel countdown, the pool bar, the Profit Estimator fetch loops, several always-on client loops, the per-tab resume snapshot, the stale-socket watchdog and the PWA build/service-worker configuration. All files are under /home/claude/wb/frontend.\n\n1. Countdown freezes (audit T1, T9, T10 — contract C2). The digits were a verbatim copy of the last `timerUpdate` frame; any late, dropped or throttled frame froze them and the catch-up burst afterwards made them jump. `src/stores/matchStore.js` now keeps a `timerAnchor` (`remaining`, `receivedAt`, `battleId`) for the last server frame and a phase-aligned 1 Hz `setTimeout` ticker (pure logic in `src/live/utils/timerCountdownAnchor.js`) decrements `timer.time_remaining` locally between frames, recomputing `time_elapsed`/`percentage_complete` when `total_duration` is known. Every server frame re-anchors: if it differs from the local clock by >= 1 s the anchor snaps to the server (reconnect, resume, drift); otherwise the local phase is kept so the digits do not jitter. Safety properties relevant to trading: the local clock never counts up, stops at 0, and a server frame saying 0 always wins — so the client's trade gate can only close earlier than the server, never later. The ticker is stopped in `setTimer(null)`, `runBattleAtomicReset` and `resetMatchState`, and re-derives immediately on `visibilitychange` (background timer throttling). Consumers (`useBattleCountdown`, TradingPanel, IndicatorsPanel, NewChart) are unchanged because they still read `matchStore.timer`. `src/live/utils/realtimeEventGuards.js` additionally tolerates `timerUpdate` timestamps up to 2 s older than the last one (API host vs engine host clock skew) and `isActiveBattlePayload` accepts frames while the client has no battle id; the matching battle-id adoption inside `useWebSocket.js` is listed for the wave-2 shell agent.\n\n2. Market Flip / estimator (E1, E3). `useMarketFlip` and `useWinEstimate` bumped their `requestId` on every effect run and restarted a trailing debounce on every dependency change, so under continuous NPC pool ticks they either sent nothing or discarded every response. Both now use a leading+trailing throttle (`src/live/utils/requestThrottle.js`: 750 ms for Market Flip, 1 s with a 200 ms keystroke debounce for the scenario cards), a `requestId` that increments per dispatched request only, and a trailing timer that deliberately survives dependency changes. A change of verdict side (price crossing the round price) fires immediately. `WinEstimatorSheet` quantises the pool signature to 0.5 % of the total pot (plus a 5 % bucket on the total) and the verdict damper drops from 1500 ms to 300 ms. Net effect: the LOSING row appears within roughly one round-trip of the crossing and refreshes at a bounded rate. No money math changed: both hooks still render exactly what the server returns.\n\n3. Pool bar (B1, P1). The `$` labels were children of the width-clamped fills, so the small side's number was clipped and covered by the white dot. In `TradingPanel.jsx`/`TradingPanel.css` the labels are absolutely positioned children of `.progress-bar-track` (z-index above the dot, pointer-events none, text shadow); a layout effect measures the label widths only when the formatted amounts change and widens `--min-pos`/`--max-pos` (`max(13%, <label+dot>px)` / `min(87%, calc(100% - …))`) so the dot can never sit on the digits. The fills keep their clamp. The smoothing rAF loop now starts from the `sellPercent` effect and stops itself when converged, writing `--sell-percent` only when the value changed, instead of running at 60 fps for the whole round.\n\n4. Client loops and re-renders (P1, P2/F3, F9, F10). `realtimeTelemetry.startDroppedFrameMonitor` is a no-op in production (DEV, `window.__TT_FRAME_MONITOR__ = true`, or `{force:true}`). `ResumeSyncBridge` now really uses its 750 ms throttle, no longer triggers on price/timer (price is read at flush time, timer is never persisted), flushes immediately on hide/pagehide, skips writes when logged out, and never persists candles (contract C1). `appResumeStore` stores the `userId`, ignores and clears a snapshot written by another account on boot, and is cleared by `authStore.logout()`; `clearStorageOnRedirectToLogin()` (401 interceptor, ProtectedRoute, Login, guest error) also removes the session keys (`clearSessionResumeState`). `PriceBadge` selects the last close as a number.\n\n5. Stale watchdog (P3). `socketHealthService` enforces a 12 s stale floor plus 0–4 s per-client jitter and, before a forced reconnect, emits a `ping` with an ack (2.5 s timeout); a socket that answers, or that received data meanwhile, is reported via `onAlive` instead of being reconnected. The backend `ping` handler is requested from the api-core agent; until then the probe times out and the old reconnect happens, later and spread out.\n\n6. PWA build (F8). `vite.config.js`: hashed `/assets/*` are served CacheFirst (they are immutable), the arena chunks (App, Matches, MainLayout, NewChart, lightweight-charts, socket, zustand, router, axios, Trading, WinEstimatorSheet, …) are precached, and the mis-nested `build.esbuildOptions` moved to top-level `esbuild` so `console.log/warn/info/debug` are really stripped (verified in dist).\n\nHow to test: `cd /home/claude/wb/frontend && node --test \\\"src/**/*.test.js\\\"` (63 tests: timer anchor, event guards, throttle/pot signature, watchdog) and `npx vite build`. Manually: with the new backend, watch the countdown keep ticking while the API is paused for a few seconds and snap back when frames resume; open the Profit Estimator during an NPC-heavy round and confirm the network tab shows <= ~1.3 market-flip and <= 1 estimate request per second and LOSING appears promptly after a crossing; make one pool tiny and confirm both `$` labels are readable with the dot clear of them; log out and back in as another user in the same tab and confirm no stale price/trades paint; in DevTools > Application > Service Workers confirm `ticktrade-assets` is CacheFirst."
+}

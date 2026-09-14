@@ -1,0 +1,188 @@
+{
+ "area": "D. engine",
+ "files_changed": [
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/battle-engine.service.ts",
+   "summary": "Per-battle FIFO serialisation of recalcPriceFromTrade (F1); finishBattle re-ordered so stop() runs only after CLOSE write + battle.end + settlement enqueue succeeded, each step retried with backoff and resumed from a per-battle progress record on a scheduled retry (F2); engine-side settlement watchdog (poll row, retry FAILED job, fresh jobId, schedule next round when COMPLETED without event) and idle watchdog (F3/F2); continuity price falls back to last COMPLETED battle endPrice before spawning; startEngine keeps existing market state on re-attach (F7); heartbeat is a self-rescheduling setTimeout aligned to the second boundary with duplicate-second skip and heartbeat price re-publish (F13/C1); .catch on every fire-and-forget publish; per-battle Redis key cleanup after settlement (F11); single pending next-round timer, createNewBattle guard + attach-to-existing safety net; full teardown in onModuleDestroy."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/events/per-battle-serial-queue.ts",
+   "summary": "New: strict per-key FIFO promise chain with depth accounting/backlog warning (used to serialise trade.executed)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/events/price-tick-coalesce.ts",
+   "summary": "Rewritten: PriceTickCoalescer with leading-edge publish, volumeScale accumulation inside the 200 ms window, trailing flush of the latest price, lastPublishedPrice/hasPending/notePublished hooks for the heartbeat (C1 / chart-data F3 / engine F10)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/events/trade-executed.handler.ts",
+   "summary": "Uses the accumulating coalescer instead of the dropping one; volumeScale on the wire = sum of trade notional since the previous published tick."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/battle-events.publisher.ts",
+   "summary": "timerUpdate publishes on a dedicated Redis connection (optional second ctor arg); every price.tick carries an eventId for the API dedupe (C1). TIMER_HEARTBEAT payload unchanged."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/redis/redis.client.ts",
+   "summary": "getTimerPublishRedis(): dedicated ioredis connection (role 'timer-publisher'), closed on shutdown (F6)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/redis/redis.publisher.ts",
+   "summary": "Optional client injection so a publisher can be bound to the dedicated timer connection."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/index.ts",
+   "summary": "process.on('unhandledRejection') that logs and keeps the process alive; timer publisher wiring; candle-bucket timer in-flight guard (F8); startLeaderRuntime/stopLeaderRuntime mutually exclusive via a transition promise, retry when the leader runtime fails to start (F7); .catch on leadership callbacks."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/engine-leader.service.ts",
+   "summary": "Transient Redis error no longer drops leadership until the lock TTL has provably elapsed since the last successful renew (observed loss still releases immediately); injectable redis + tickOnce() test hook (F7)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/settlement-queue.producer.ts",
+   "summary": "getJobState(), retryFailed() (job.retry), enqueueFresh() (unique jobId) and settlementJobId() so recovery paths can get past BullMQ's jobId dedupe of FAILED jobs (F3)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/battle-state-recovery.service.ts",
+   "summary": "healPendingSettlements inspects the job state: retries FAILED jobs, leaves running ones alone, re-enqueues under a fresh id when the job completed but the row is still pending (F3)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/battle-snapshot.publisher.ts",
+   "summary": "trader_count uses the server-side ZUNIONSTORE+ZCARD Lua count instead of ZRANGE 0 -1 of both user zsets (F5); overridable commandRedis() for tests."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/risk-terminal-tick.publisher.ts",
+   "summary": "Cadence 1 Hz only while ticktrade:risk-terminal:watchers exists, else every 5 s; input-change signature (market-state version/price/pots/extremes, mode, settings version, fee) skips recomputation and re-issues the last payload with the new countdown; battle meta read once per round; DirectiveLiveInputCache for incremental tick reads (F4)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/market/market-state.repository.ts",
+   "summary": "market:state:<id> written with EX 24h; delete(battleId) removes cache + key (F11)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/chart/candle-store.service.ts",
+   "summary": "active:candle:<id>:<interval> written with EX 24h; deleteActive() (F11)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/market/market-state.service.ts",
+   "summary": ".catch on fire-and-forget Redis writes and the candle onPriceUpdate callback (F6)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/redis/redis.subscriber.ts",
+   "summary": ".catch on recordTradeTick/touchActiveUser fire-and-forgets; comment that trade handling is serialised in the engine service."
+  },
+  {
+   "path": "/home/claude/wb/backend/packages/shared/src/npc-organic/round-context.ts",
+   "summary": "buildDirectiveRoundInput: rpc-linked user ids memoised per prisma client (60 s default, rpcUserIdsTtlMs), optional DirectiveLiveInputCache (incremental price-tick ring keyed by last id + memoised stored range); DirectiveInputPrisma accepts an id filter/select. Settlement callers are unchanged (no cache → identical reads)."
+  },
+  {
+   "path": "/home/claude/wb/backend/packages/shared/src/redis/battle-leaderboard.ts",
+   "summary": "countBattleLeaderboardUsers(): one Lua call (ZUNIONSTORE into a scratch key, ZCARD, DEL) returning the exact distinct real-user count without transferring members (F5)."
+  },
+  {
+   "path": "/home/claude/wb/backend/packages/shared/src/events/risk-terminal-tick.v1.ts",
+   "summary": "RISK_TERMINAL_WATCHERS_REDIS_KEY ('ticktrade:risk-terminal:watchers') and RISK_TERMINAL_WATCHERS_TTL_SEC (15) — contract between API (writer) and engine (reader)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/risk-terminal-regression.cjs",
+   "summary": "Existing harness: vm context now exposes process and the shared mock exports DirectiveLiveInputCache (2-line change, all 10 tests green again)."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/redis/redis-client.test-mock.ts",
+   "summary": "New test-only helper: Module._load hook that replaces redis/redis.client with an in-memory fake so engine services can be exercised without Redis."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/events/per-battle-serial-queue.spec.ts",
+   "summary": "New spec (4 tests) incl. the lost-update regression."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/events/price-tick-coalesce.spec.ts",
+   "summary": "New spec (5 tests): leading/trailing edges, no volume lost across windows, window 0, flush/forget, failing publish isolation."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/battle-engine.stability.spec.ts",
+   "summary": "New spec (6 tests): finish ordering with retries, retry resumes at failed step with battle.end exactly once, settlement watchdog (FAILED retry, COMPLETED-without-event), FIFO trades, continuity DB fallback + aligned/deduped heartbeat, re-attach keeps market state."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/engine-leader.service.spec.ts",
+   "summary": "New spec (2 tests): TTL grace on transient error, immediate release on observed loss."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/battle-snapshot.publisher.spec.ts",
+   "summary": "New spec (1 test): trader_count via Lua count, no ZRANGE."
+  },
+  {
+   "path": "/home/claude/wb/backend/apps/engine/src/battle/risk-terminal-tick.cadence.spec.ts",
+   "summary": "New spec (2 tests): unchanged inputs skip recomputation, idle cadence when nobody watches."
+  },
+  {
+   "path": "/home/claude/wb/backend/packages/shared/src/npc-organic/round-context.spec.ts",
+   "summary": "Added 2 tests: incremental tick reads + range memo per round, rpc id memo/TTL/invalidation."
+  },
+  {
+   "path": "/home/claude/wb/backend/packages/shared/src/redis/battle-leaderboard.spec.ts",
+   "summary": "New spec (2 tests) for countBattleLeaderboardUsers."
+  }
+ ],
+ "behaviour_changes": [
+  "trade.executed events for one battle are applied strictly in arrival order, one at a time (no more lost market-state updates under bursts); different battles do not block each other.",
+  "engine:events:price.tick: at most one tick per 200 ms per battle as before, but volumeScale is now the SUM of trade notional since the previous published tick and the last price of a burst is always flushed (trailing edge); every tick carries an eventId; the heartbeat re-publishes the current price once per second as source 'heartbeat' (volume 0, changed:false) only when it differs from the last published tick.",
+  "finishBattle: the heartbeat is stopped only after the CLOSE write, battle.end and the settlement enqueue succeeded; each step is retried (5 attempts, 500 ms exponential backoff); on total failure a retry re-runs only the remaining steps 5 s later (battle.end is never published twice by the engine). The in-memory round is marked CLOSE while finishing so the heartbeat stops scheduling settlement checks.",
+  "After a successful enqueue a settlement watchdog polls the battle row every 90 s until settlement.completed is seen: COMPLETED without the event → next round scheduled by the engine; FAILED BullMQ job → job.retry(); missing/spent job → re-enqueued under a fresh jobId. scheduleNextBattleAfterSettlement is idempotent per battle.",
+  "Idle watchdog (5 s poll): when there is no active battle, no pending creation, no finish in progress and no settlement watchdog for longer than cooldown + 15 s, the engine re-attaches to an ACTIVE row, nudges a stuck settlement, or creates a fresh round. createNewBattle failures are retried after 5 s.",
+  "healPendingSettlements (leader start) retries FAILED settlement jobs instead of silently re-adding a job with the same id.",
+  "Continuity/rollover price: Redis → in-memory → last COMPLETED battle endPrice (Postgres) → explicit fallbacks → spawn. The fresh 1.23 spawn is now used only when there is no completed battle at all.",
+  "startEngine on restart/failover keeps the existing per-battle market state (pots, roundHigh/Low, sequence, pressure); it only builds state when none exists.",
+  "Leader election: a Redis error while holding the lock keeps leadership until the lock TTL (10 s) has elapsed since the last successful renew; an observed loss (renew returns 0) still releases immediately. Leader runtime start/stop are mutually exclusive; a failed start is retried after 5 s while still leader; lost leadership now also cancels a pending next-round timer.",
+  "Timer heartbeat is a self-rescheduling setTimeout landing ~30 ms after each second boundary; a second already published is never re-emitted (duplicates skipped); freeze-seconds cache is primed before the first tick. Timer PUBLISH goes out on its own ioredis connection. Payload shape unchanged.",
+  "Risk terminal tick: full projection at 1 Hz only while ticktrade:risk-terminal:watchers exists, otherwise every 5 s; when the inputs are unchanged the previous payload is re-issued with the fresh countdown (no reads/maths); rpc-linked user ids cached 60 s; price ticks read incrementally (only rows newer than the last id); battle startPrice/pots row read once per round; the Redis last-tick key is always refreshed, pub/sub only on change or while watched.",
+  "battle.snapshot trader_count: distinct real users counted server-side with one Lua call (ZUNIONSTORE+ZCARD+DEL) — no member lists transferred.",
+  "market:state:<id> and active:candle:<id>:1000 now carry a 24 h TTL and are deleted after settlement / cancel.",
+  "Engine process installs process.on('unhandledRejection') (logs, keeps running); all fire-and-forget publishes carry .catch.",
+  "Candle bucket timer skips a tick while the previous advanceTimeBucket is still running."
+ ],
+ "new_settings_env": [
+  "ENGINE_HEARTBEAT_BOUNDARY_OFFSET_MS (default 30, clamp 5–400): ms after the second boundary at which the heartbeat fires.",
+  "ENGINE_FINISH_IO_ATTEMPTS (default 5): retry attempts for each fallible finishBattle step (500 ms exponential backoff).",
+  "ENGINE_FINISH_RETRY_MS (default 5000, min 1000): delay before finishBattle is re-run after all attempts failed.",
+  "ENGINE_SETTLEMENT_WATCHDOG_MS (default 90000, min 1000): settlement watchdog poll interval after enqueue.",
+  "ENGINE_IDLE_WATCHDOG_GRACE_MS (default 15000): idle watchdog recovers after cooldown + this grace.",
+  "RISK_TERMINAL_IDLE_INTERVAL_MS (default 5000): risk-terminal projection cadence while no admin is watching (1 Hz while watched).",
+  "Redis key contract (no env): ticktrade:risk-terminal:watchers (SET … EX 15 by the API while room admin_risk_terminal is non-empty) — exported as RISK_TERMINAL_WATCHERS_REDIS_KEY / RISK_TERMINAL_WATCHERS_TTL_SEC from @ticktrade/shared.",
+  "Existing ENGINE_PRICE_TICK_COALESCE_MS keeps its meaning (window length; 0 = publish every tick)."
+ ],
+ "tests_added": [
+  "apps/engine/src/events/per-battle-serial-queue.spec.ts — FIFO/one-in-flight, lost-update regression, per-battle independence, rejection isolation (4)",
+  "apps/engine/src/events/price-tick-coalesce.spec.ts — leading + trailing edge with accumulated volume, no volume lost across windows ($100k regression), window 0, flush/forget, failing publish (5)",
+  "apps/engine/src/battle/battle-engine.stability.spec.ts — finish ordering (update→battle.end→enqueue→stop) with retries, retry resumes at the failed step with battle.end exactly once, settlement watchdog (FAILED job retried, COMPLETED-without-event schedules next round, idempotent), FIFO trade application, continuity price from last COMPLETED endPrice + aligned/deduped heartbeat ticks, re-attach keeps market state (6)",
+  "apps/engine/src/battle/engine-leader.service.spec.ts — TTL grace on transient Redis error, immediate release on observed loss (2)",
+  "apps/engine/src/battle/battle-snapshot.publisher.spec.ts — trader_count via one Lua count + ZCARDs, no ZRANGE (1)",
+  "apps/engine/src/battle/risk-terminal-tick.cadence.spec.ts — unchanged inputs skip recomputation and re-issue with new countdown, idle cadence (2)",
+  "packages/shared/src/npc-organic/round-context.spec.ts — incremental tick reads + memoised range, rpc id cache TTL/invalidation (2 added)",
+  "packages/shared/src/redis/battle-leaderboard.spec.ts — countBattleLeaderboardUsers Lua contract and invalid replies (2)",
+  "apps/engine/src/battle/risk-terminal-regression.cjs — pre-existing harness repaired (process global, DirectiveLiveInputCache mock); 10/10 green"
+ ],
+ "verification": "Type-check: `npx tsc --noEmit -p packages/shared/tsconfig.json`, `-p apps/engine/tsconfig.json`, `-p apps/api/tsconfig.json`, `-p apps/npc-worker/tsconfig.json`, `-p apps/settlement-worker/tsconfig.json` all exit 0. Shared rebuilt (`pnpm --filter @ticktrade/shared build`) so other agents see the new exports. Tests: `cd packages/shared && pnpm test` → 236 pass / 3 fail (the 3 pre-existing last-moment-company-hedge failures; baseline 232/235, +4 new passing). `cd apps/engine && pnpm test` → 102 pass / 15 fail on 117 tests (baseline 84–85/97): the 15 are the 12 pre-existing pricing/npc-simulator.protection failures (one of the original 13 is intermittent and passed this run) plus 3 `npc-startup-off.regression` assertions that expect the old \"missing flag = ON\" default — those break because agent E's in-progress C3 change to packages/shared/src/events/npc-simulator.redis.ts (their file, modified in the tree) flips the default to OFF; none of the failures touch my code, and all 20 new tests plus the repaired 10-test risk-terminal harness pass. The engine package has no `build` script (production runs it under ts-node), so the strict `tsc --noEmit` is its build check. ESLint: the backend repo has no ESLint config (ESLint 9 aborts with \"Oops! Something went wrong\"), so linting is not applicable to these TS files. CRLF verified with `file` on every edited file (the .cjs harness was LF originally and stays LF; its diff is 2 lines). Runtime verification was not attempted because the running stack still executes the old build (wave-1 rule).",
+ "requests_for_other_agents": [
+  {
+   "agent": "F (api-core)",
+   "file": "apps/api/src/ws/ws.gateway.ts (and/or apps/api/src/admin/risk-terminal*)",
+   "change": "Write the watchers presence key the engine now reads. Import { RISK_TERMINAL_WATCHERS_REDIS_KEY, RISK_TERMINAL_WATCHERS_TTL_SEC } from '@ticktrade/shared'. When a socket joins room 'admin_risk_terminal' (both join sites, ws.gateway.ts ~L269 and ~L300) and while the room is non-empty, run every 5 s: `await this.redis.set(RISK_TERMINAL_WATCHERS_REDIS_KEY, '1', 'EX', RISK_TERMINAL_WATCHERS_TTL_SEC);` e.g. `private watchersTimer: NodeJS.Timeout | null = null; private refreshRiskTerminalWatchers() { const n = this.server.sockets.adapter.rooms.get('admin_risk_terminal')?.size ?? 0; if (n > 0) { void this.redis.set(RISK_TERMINAL_WATCHERS_REDIS_KEY, '1', 'EX', RISK_TERMINAL_WATCHERS_TTL_SEC).catch(() => undefined); } else if (this.watchersTimer) { clearInterval(this.watchersTimer); this.watchersTimer = null; } }` — call it once on join and start `this.watchersTimer ??= setInterval(() => this.refreshRiskTerminalWatchers(), 5_000)`. Without it the engine computes the projection every 5 s instead of 1 Hz (safe default), and the REST endpoint still gets fresh numbers from the Redis last-tick key."
+  },
+  {
+   "agent": "F (api-core)",
+   "file": "apps/api/src/redis/redis.subscriber.ts (~L3276 and ~L3348, equity audience) and apps/api/src/admin risk-terminal REST fallback",
+   "change": "Optional, not required for correctness: where only a distinct count is needed, replace `(await listBattleLeaderboardUserIds(redis, battleId)).length` with `await countBattleLeaderboardUsers(redis, battleId)` (new export in @ticktrade/shared, one Lua call, no member transfer). The API's own risk-terminal REST fallback may also pass `rpcUserIdsTtlMs` / a `DirectiveLiveInputCache` instance to buildDirectiveRoundInput if it wants the same bounded reads; defaults are unchanged for it."
+  },
+  {
+   "agent": "E (npc)",
+   "file": "apps/engine/src/npc/npc-startup-off.regression.cjs / .spec.ts",
+   "change": "Three assertions ('missing flag retains the existing shared default ON…', 'empty flag retains…', 'operator STOP arriving after boot read…') now fail because your C3 change makes a missing Redis flag resolve to DB-then-OFF; update those expectations as part of your default-OFF work. No engine-side change needed: NPC trade paths already call battleEngine.recalcPriceFromTrade, which is now serialised per battle automatically."
+  }
+ ],
+ "unfinished": [
+  "Bounded price-tick reads were implemented as an incremental in-memory ring (only rows newer than the last id are fetched each second) rather than collapsing to high/low/last: the directive projection's score term integrates the whole price path since each entry (computeAucPosPips), so a high/low/last aggregate would have made the Risk Terminal disagree with settlement. The legacy Model-A path (packages/shared/src/payout/battle-payout.live.ts, agent F's file) still reads all ticks when it does run, but it now runs only on input change and at the watched/idle cadence.",
+  "Trader count: the per-battle SADD SET option was not adopted because the real-user leaderboard writer (API BattleLeaderboardService.addStake) is agent F's; the server-side ZUNIONSTORE+ZCARD Lua count gives the exact figure without any API change, so no follow-up is required.",
+  "Inline (SETTLEMENT_VIA_QUEUE=false) mode has no worker to watch, so the settlement watchdog is not armed there; a stuck inline settlement is recovered by the finish retry and the idle watchdog re-running the finish steps.",
+  "Runtime smoke against a restarted stack (timer cadence on the wire, watchdog logs) is left to the integration agent, as required by the wave-1 rules."
+ ],
+ "notes_for_pdf": "Scope: the battle engine process (apps/engine) plus three shared helpers it depends on. Everything below is in /home/claude/wb/backend.\n\nWhat was wrong. (1) Trades reached the engine over Redis pub/sub and each message was handled concurrently. ioredis delivers every message of one socket read in a tight loop, so trade B read the cached market state before trade A had written its result and B's write overwrote A's price impact, pot totals and sequence. Because the settlement final price and the round high/low derive from that state, this was a money bug under bursts. (2) finishBattle stopped the 1 Hz heartbeat before doing its fallible I/O (Postgres CLOSE write, battle.end publish, BullMQ enqueue). Any failure there — a pool timeout, a Redis blip — left the round un-ended with no timer and nothing in-process to revisit it; only a restart healed it. (3) The next round was created solely from the settlement.completed pub/sub event; if that message was missed, or the settlement job failed all attempts, nothing ever restarted, and recovery's re-enqueue was a silent no-op because BullMQ ignores an add while a failed job with the same id exists. (4) Per-second work on the engine loop was unbounded: the risk-terminal projection re-read all price ticks and all rpc_users every second, and the snapshot publisher shipped both full leaderboard zsets up to 5 times a second just to count them. (5) Timer publishes shared one Redis socket with bulk reads (head-of-line delay) and a single un-caught publish rejection killed the process (Node 22 throws on unhandled rejections). (6) Leader election dropped leadership on any Redis error, and startEngine then rebuilt the live market state from the battles row (pots are 0 there mid-round). (7) The 200 ms price-tick coalescer dropped ticks together with their volume, so chart volume reflected sampling luck; the last price of a burst was not published. (8) After a Redis flush the next round spawned at ~1.23 instead of continuing from the previous close (the battle 79→80 cliff). (9) Per-battle Redis keys never expired.\n\nWhat changed. apps/engine/src/battle/battle-engine.service.ts: recalcPriceFromTrade now enqueues onto a per-battle FIFO promise chain (apps/engine/src/events/per-battle-serial-queue.ts), so every caller — Redis subscriber, in-process NPC engines — is serialised. finishBattle keeps a per-battle progress record; the CLOSE write, battle.end and enqueue are each retried with backoff and stop() runs only after all three succeeded; on total failure a retry resumes at the failed step, so battle.end is never republished by the engine. After the enqueue a settlement watchdog polls the row (default 90 s): COMPLETED without the event schedules the next round itself, a FAILED job is retried via job.retry(), a missing/spent job is re-enqueued under a fresh id. An idle watchdog recovers when there is no battle and nothing pending for longer than cooldown + 15 s. The continuity price now falls back to the last COMPLETED battle's endPrice in Postgres before spawning. startEngine keeps existing market state on re-attach. The heartbeat is a self-rescheduling setTimeout aligned ~30 ms after the round's second boundary, never re-emits a second, publishes on a dedicated Redis connection, and re-publishes the current price once per second as a zero-volume 'heartbeat' tick when it differs from the last published one. apps/engine/src/events/price-tick-coalesce.ts accumulates volume inside the window and flushes the latest price at its end, so volumeScale on the wire is the total notional since the previous published tick (the API sums it into the candle). apps/engine/src/index.ts adds process.on('unhandledRejection'), the candle-timer in-flight guard and mutually exclusive leader runtime start/stop. engine-leader.service.ts keeps leadership through a transient error until the lock TTL has elapsed. risk-terminal-tick.publisher.ts computes at 1 Hz only while the API's watchers key exists (else every 5 s), skips recomputation when the market-state version and context are unchanged, caches rpc-linked ids for 60 s and reads price ticks incrementally (packages/shared/src/npc-organic/round-context.ts, DirectiveLiveInputCache). battle-snapshot.publisher.ts counts traders with one Lua ZUNIONSTORE+ZCARD (packages/shared/src/redis/battle-leaderboard.ts). market:state and active:candle keys get a 24 h TTL and are deleted after settlement.\n\nWhy it is safe. No money maths changed: the price engine, settlement and projections are untouched; serialisation only fixes ordering, and the incremental tick ring feeds the projection the same full price path settlement uses. Every recovery path is idempotent: finish progress flags, settlementSeen guards scheduleNextBattleAfterSettlement, createNewBattle attaches to an existing ACTIVE row instead of creating a second one, and settlement itself skips already-settled rows. The TIMER_HEARTBEAT payload shape is unchanged; price ticks only gain an eventId. All new timers are env-tunable with production-safe defaults and are torn down when leadership is lost.\n\nHow to test. Unit: `cd packages/shared && pnpm test` (236/239, 3 pre-existing failures) and `cd apps/engine && pnpm test` (all new specs green; the 12 pre-existing pricing failures remain, and 3 npc-startup-off assertions now fail only because the NPC agent's default-OFF change is in the same tree). Type-check with `npx tsc --noEmit -p apps/engine/tsconfig.json` (the engine runs under ts-node; there is no separate build). After the integration restart: watch `engine:events:timer` with redis-cli SUBSCRIBE — one tick per second, timestamps a fixed ~30 ms after each second boundary, no repeated remaining values; kill the settlement worker during a round end and confirm the engine logs \"settlement watchdog\" lines and the next round still starts once the worker returns; FLUSHALL Redis between rounds and confirm the next round's startPrice equals the previous battles.endPrice; `redis-cli TTL market:state:<id>` shows a 24 h TTL during the round and the key is gone after settlement; with the admin Risk Terminal closed, `engine:events:risk-terminal.tick` publishes every 5 s, and every second while it is open (requires the API-side watchers key from agent F)."
+}

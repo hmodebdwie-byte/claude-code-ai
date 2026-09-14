@@ -1,0 +1,2291 @@
+From fbd4dd05b2c9ebae473a23de73c9ba8a6c5b570a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 14 Sep 2026 01:11:56 +0000
+Subject: [PATCH] feat(admin-tools): Risk Breaches, Battle Inspector, Price
+ Movement Audit and Risk Terminal on the settlement record
+
+Risk Breaches rewritten: period presets and scope, server summary for the whole
+period, shortfall / house cash columns, resolution from the list, Details calls
+the server audit (settlement breakdown, per-user cash PnL, NPC payouts).
+Battle Inspector: LIVE badge only on ACTIVE rows, period presets with exact local
+day boundaries, MODEL / COMMISSION / HOUSE CASH columns, settlement panel,
+participants per side with hedged / house markers; history modal gets All time.
+Price Movement Audit: All Time, numeric threshold, swing-fallback marker, freeze
+seconds and config source, replay method under the chart, status-aware CSV and
+post-save refetch.
+Risk Terminal: settlement model and leader, House Cash Result / Commission /
+Shortfall per scenario, breach badges replace Thin Margin, integrity alerts table,
+refetch on round change.
+Slice: exact-instant ranges (start_at/end_at), scope, risk breach detail and
+terminal alerts thunks; deep history without period on a battle id.
+Build: workbox precache limit raised for the main bundle.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Dzk243ADEkJuWxdHGG3hNv
+---
+ .../AdminDashboard/BattleHistoryModal.jsx     |   11 +-
+ src/Pages/AdminDashboard/BattleInspector.jsx  |  150 +-
+ src/Pages/AdminDashboard/RiskBreaches.jsx     | 1262 +++++++----------
+ .../PriceMovementAudit/PriceReplayChart.jsx   |    2 +-
+ src/Pages/PriceMovementAudit/index.jsx        |   67 +-
+ src/Pages/RiskManagementTerminal/index.jsx    |  159 ++-
+ src/store/slices/adminSlice.js                |  121 +-
+ vite.config.js                                |    3 +
+ 8 files changed, 968 insertions(+), 807 deletions(-)
+
+diff --git a/src/Pages/AdminDashboard/BattleHistoryModal.jsx b/src/Pages/AdminDashboard/BattleHistoryModal.jsx
+index 64bd738..61aa34f 100644
+--- a/src/Pages/AdminDashboard/BattleHistoryModal.jsx
++++ b/src/Pages/AdminDashboard/BattleHistoryModal.jsx
+@@ -265,6 +265,7 @@ function BattleHistoryModal({ user, onClose }) {
+               <option value="today">Today</option>
+               <option value="week">This week</option>
+               <option value="month">This month</option>
++              <option value="all">All time</option>
+               <option value="custom">Custom</option>
+             </select>
+           </div>
+@@ -274,12 +275,10 @@ function BattleHistoryModal({ user, onClose }) {
+               <label className="form-label">Date Range</label>
+               <DateRangeDropdown 
+                 onChange={(range) => {
+-                  if (range.startDate) {
+-                    setStartDate(range.startDate.toISOString().split('T')[0]);
+-                  }
+-                  if (range.endDate) {
+-                    setEndDate(range.endDate.toISOString().split('T')[0]);
+-                  }
++                  // Local calendar day, not the UTC slice of it (toISOString shifted the day west of UTC).
++                  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
++                  if (range.startDate) setStartDate(ymd(range.startDate));
++                  if (range.endDate) setEndDate(ymd(range.endDate));
+                 }}
+               />
+             </div>
+diff --git a/src/Pages/AdminDashboard/BattleInspector.jsx b/src/Pages/AdminDashboard/BattleInspector.jsx
+index a42f12d..248ac4f 100644
+--- a/src/Pages/AdminDashboard/BattleInspector.jsx
++++ b/src/Pages/AdminDashboard/BattleInspector.jsx
+@@ -10,6 +10,23 @@ import { useIndicatorSocket } from "../../hooks/useIndicatorSocket";
+ 
+ const LIMIT = 10;
+ const WINNER_DISTRIBUTION_LIMIT = 10;
++const MODEL_LABEL = { directive: "Organic (directive)", model_a: "Legacy (Model A)", tie: "Tie" };
++
++/** Local-day boundaries as exact instants — the server no longer reads the browser's day as a UTC day. */
++function localDayStart(d) {
++  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).toISOString();
++}
++function localDayEnd(d) {
++  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).toISOString();
++}
++
++function fmtSigned(value) {
++  if (value == null || value === "") return "—";
++  const n = Number(value);
++  if (!Number.isFinite(n)) return String(value);
++  const s = `$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
++  return n < 0 ? `−${s}` : n > 0 ? `+${s}` : s;
++}
+ 
+ /** API: { success, data: { battles, pagination, filters } } */
+ function pickRows(payload) {
+@@ -117,8 +134,8 @@ const BattleInspector = ({ initialBattleId, onBack }) => {
+ 
+   const [period, setPeriod] = useState("all");
+   const [statusFilter, setStatusFilter] = useState("all");
+-  const [startDate, setStartDate] = useState("");
+-  const [endDate, setEndDate] = useState("");
++  const [startAt, setStartAt] = useState("");
++  const [endAt, setEndAt] = useState("");
+   const [battleIdSearch, setBattleIdSearch] = useState("");
+   const [page, setPage] = useState(1);
+ 
+@@ -168,7 +185,7 @@ const BattleInspector = ({ initialBattleId, onBack }) => {
+     (nextPage = 1) => {
+       const idTrim = debouncedBattleId;
+       if (period === "custom" && !idTrim) {
+-        if (!startDate || !endDate) {
++        if (!startAt || !endAt) {
+           return;
+         }
+       }
+@@ -183,8 +200,8 @@ const BattleInspector = ({ initialBattleId, onBack }) => {
+       } else {
+         payload.period = period;
+         if (period === "custom") {
+-          payload.start_date = startDate;
+-          payload.end_date = endDate;
++          payload.start_at = startAt;
++          payload.end_at = endAt;
+         }
+         if (statusFilter !== "all") {
+           payload.status = statusFilter;
+@@ -193,18 +210,18 @@ const BattleInspector = ({ initialBattleId, onBack }) => {
+ 
+       dispatch(fetchBattleInspector(payload));
+     },
+-    [debouncedBattleId, dispatch, endDate, period, startDate, statusFilter],
++    [debouncedBattleId, dispatch, endAt, period, startAt, statusFilter],
+   );
+ 
+   useEffect(() => {
+     if (period === "custom" && !debouncedBattleId) {
+-      if (!startDate || !endDate) {
++      if (!startAt || !endAt) {
+         return;
+       }
+     }
+     setPage(1);
+     runFetch(1);
+-  }, [period, startDate, endDate, statusFilter, debouncedBattleId, runFetch]);
++  }, [period, startAt, endAt, statusFilter, debouncedBattleId, runFetch]);
+ 
+   const goPage = (n) => {
+     if (n < 1) return;
+@@ -229,7 +246,7 @@ const BattleInspector = ({ initialBattleId, onBack }) => {
+                 full battle data.
+               </p>
+             </div>
+-            {rows.length > 0 && rows[0]?.battle_id != null && (
++            {rows.length > 0 && rows[0]?.battle_id != null && rows[0]?.status === "ACTIVE" && (
+               <div
+                 className="live-battle-header-badge"
+                 style={{ cursor: 'pointer' }}
+@@ -265,21 +282,37 @@ const BattleInspector = ({ initialBattleId, onBack }) => {
+               />
+             </div>
+ 
+-            <div className="form-group battle-inspector-field" style={{ minWidth: 260 }}>
+-              <label className="form-label">Date Range</label>
+-              <DateRangeDropdown
+-                onChange={(range) => {
+-                  setPeriod("custom");
+-                  if (range.startDate) {
+-                    setStartDate(range.startDate.toISOString().split('T')[0]);
+-                  }
+-                  if (range.endDate) {
+-                    setEndDate(range.endDate.toISOString().split('T')[0]);
+-                  }
+-                }}
+-              />
++            <div className="form-group battle-inspector-field">
++              <label className="form-label" htmlFor="bi-period">Period</label>
++              <select
++                id="bi-period"
++                className="form-select"
++                value={period}
++                onChange={(e) => setPeriod(e.target.value)}
++                disabled={Boolean(battleIdSearch.trim())}
++              >
++                <option value="all">All time</option>
++                <option value="today">Today</option>
++                <option value="week">This week</option>
++                <option value="month">This month</option>
++                <option value="custom">Custom range</option>
++              </select>
+             </div>
+ 
++            {period === "custom" && (
++              <div className="form-group battle-inspector-field" style={{ minWidth: 260 }}>
++                <label className="form-label">Date Range</label>
++                <DateRangeDropdown
++                  onChange={(range) => {
++                    if (range.startDate && range.endDate) {
++                      setStartAt(localDayStart(range.startDate));
++                      setEndAt(localDayEnd(range.endDate));
++                    }
++                  }}
++                />
++              </div>
++            )}
++
+             <div className="form-group battle-inspector-field">
+               <label className="form-label" htmlFor="bi-status">
+                 Status
+@@ -351,6 +384,9 @@ const BattleInspector = ({ initialBattleId, onBack }) => {
+                   <th>DATE/TIME</th>
+                   <th>WINNERS</th>
+                   <th>WINNER SIDE</th>
++                  <th>MODEL</th>
++                  <th>COMMISSION</th>
++                  <th>HOUSE CASH</th>
+                   <th>STATUS</th>
+                   <th>ACTIONS</th>
+                 </tr>
+@@ -386,8 +422,11 @@ const BattleInspector = ({ initialBattleId, onBack }) => {
+                         {winnerUsersLabel}
+                       </td>
+                       <td>{row?.winner_side ?? "—"}</td>
++                      <td>{row?.settlement_model ? (MODEL_LABEL[row.settlement_model] || row.settlement_model) : "—"}{row?.valuation_source === "recomputed" ? <span title="Rebuilt from the rows (settled before the settlement record existed)" style={{ color: '#f59e0b', marginLeft: 4 }}>*</span> : null}</td>
++                      <td>{row?.volume?.company_commission == null ? "—" : `$${fmtNum(row.volume.company_commission, 2)}`}</td>
++                      <td style={{ color: row?.volume?.house_cash_result < 0 ? '#ff2d86' : row?.volume?.house_cash_result > 0 ? '#00e676' : undefined }}>{fmtSigned(row?.volume?.house_cash_result)}</td>
+                       <td>
+-                        {idx === 0 ? (
++                        {row?.status === "ACTIVE" ? (
+                           <span className="status-badge live">
+                             <span className="live-pulse-dot" />
+                             LIVE
+@@ -587,6 +626,18 @@ const BattleInspector = ({ initialBattleId, onBack }) => {
+                         <span>Has Real Users</span>
+                         <strong>{v.has_real_user_trades == null ? "—" : v.has_real_user_trades ? "Yes" : "No"}</strong>
+                       </div>
++                      <div className="um-detail-row">
++                        <span>Gross real (before hedge netting)</span>
++                        <strong>${fmtNum(v.real_money_gross)}</strong>
++                      </div>
++                      <div className="um-detail-row">
++                        <span>Hedged users</span>
++                        <strong>{v.hedged_user_count ?? "—"}</strong>
++                      </div>
++                      <div className="um-detail-row">
++                        <span>RPC / house stakes</span>
++                        <strong>${fmtNum(v.rpc_money)}</strong>
++                      </div>
+                     </div>
+                   </div>
+ 
+@@ -613,9 +664,56 @@ const BattleInspector = ({ initialBattleId, onBack }) => {
+                           {v.company_commission == null ? "—" : `$${fmtNum(v.company_commission)}`}
+                         </strong>
+                       </div>
++                      <div className="um-detail-row">
++                        <span>Winning side{battleDetail.status === 'ACTIVE' ? ' (if it ended now)' : ''}</span>
++                        <strong>{battleDetail.winning_side ?? "—"}{battleDetail.winner_rule ? <span style={{ color: '#888', fontWeight: 400, marginLeft: 6, fontSize: 11 }}>{battleDetail.winner_rule}</span> : null}</strong>
++                      </div>
++                      <div className="um-detail-row">
++                        <span>NPC engine</span>
++                        <strong>{battleDetail.npc_mode ?? "—"}</strong>
++                      </div>
+                     </div>
+                   </div>
+ 
++                  {battleDetail.settlement && (() => {
++                    const s = battleDetail.settlement;
++                    const rows_ = [
++                      ['Model', MODEL_LABEL[s.model] || s.model || s.kind],
++                      ['Winner rule', s.winner_reason],
++                      ['Fee rate', s.fee_rate != null ? `${(Number(s.fee_rate) * 100).toFixed(2)}%` : null],
++                      ['Commission', s.company_commission != null ? `$${fmtNum(s.company_commission, 2)}` : null],
++                      ['Commission source', s.commission_source],
++                      ['Real losing volume', s.real_losing_volume != null ? `$${fmtNum(s.real_losing_volume, 2)}` : null],
++                      ['Net real loser pool', s.net_real_loser_pool != null ? `$${fmtNum(s.net_real_loser_pool, 2)}` : null],
++                      ["Real winners' profit", s.real_winner_payouts_profit != null ? `$${fmtNum(s.real_winner_payouts_profit, 2)}` : null],
++                      ['Shortfall (paid beyond the real pool)', s.shortfall != null ? `$${fmtNum(s.shortfall, 2)}` : null],
++                      ['House cash result', fmtSigned(s.house_pnl)],
++                      ["Model's company net", fmtSigned(s.company_net)],
++                      ['Simulator net', fmtSigned(s.simulator_net)],
++                      ['NPC profit (after cap)', s.sim_profit != null ? `$${fmtNum(s.sim_profit, 2)}` : null],
++                      ['Paid to NPC winners', s.distributed_to_npc_winners != null ? `$${fmtNum(s.distributed_to_npc_winners, 2)}` : null],
++                      ['Refunded to real users', s.refunded_to_real_users != null ? `$${fmtNum(s.refunded_to_real_users, 2)}` : null],
++                      ['Ledger credits to winners', s.real_winner_ledger_credits_total != null ? `$${fmtNum(s.real_winner_ledger_credits_total, 2)}` : null],
++                      ['Profit mismatch (record vs DB)', s.model_reconciliation ? `$${fmtNum(s.model_reconciliation.profit_mismatch, 2)}` : null],
++                      ['Record source', s.valuation_source === 'recomputed' ? 'rebuilt from rows' : s.valuation_source],
++                    ].filter(([, val]) => val != null && val !== '—');
++                    return (
++                      <div className="um-detail-box">
++                        <div className="um-detail-box-header">
++                          <h3>Settlement <span className="dot active"></span></h3>
++                        </div>
++                        <div className="um-detail-box-body">
++                          {rows_.map(([label, val]) => (
++                            <div key={label} className="um-detail-row">
++                              <span>{label}</span>
++                              <strong>{val}</strong>
++                            </div>
++                          ))}
++                        </div>
++                      </div>
++                    );
++                  })()}
++
+                   {(() => {
+                     const isActiveBattle = battleDetail.status === "ACTIVE";
+                     const tickMatchesThisBattle =
+@@ -749,13 +847,13 @@ const BattleInspector = ({ initialBattleId, onBack }) => {
+                               </tr>
+                             ) : winnerTab === "users" ? (
+                               pageRows.map((entry, idx) => (
+-                                <tr key={`${entry.user_id ?? "user"}-${startIndex + idx}`}>
++                                <tr key={`${entry.user_id ?? "user"}-${entry.side ?? ''}-${startIndex + idx}`}>
+                                   <td className="table-id">{entry.user_id ?? "—"}</td>
+-                                  <td className="table-username">{entry.username ?? "—"}</td>
++                                  <td className="table-username">{entry.username ?? "—"}{entry.is_rpc ? <span title="RPC / house account" style={{ color: '#f59e0b', marginLeft: 4, fontSize: 11 }}>(house)</span> : null}{entry.is_hedged ? <span title="Traded both sides in this round" style={{ color: '#888', marginLeft: 4, fontSize: 11 }}>(hedged)</span> : null}</td>
+                                   <td style={{ fontWeight: 500 }}>${fmtNum(entry.user_stake_amount)}</td>
+                                   <td>{entry.side ?? "—"}</td>
+                                   <td>
+-                                    <span className={`status-badge ${entry.result_status === 'WINNER' ? 'active' : entry.result_status === 'REFUNDED' ? 'pending' : 'blocked'}`}>
++                                    <span className={`status-badge ${entry.result_status === 'WINNER' ? 'active' : entry.result_status === 'REFUNDED' || entry.result_status === 'OPEN' ? 'pending' : 'blocked'}`}>
+                                       {entry.result_status ?? "—"}
+                                     </span>
+                                   </td>
+diff --git a/src/Pages/AdminDashboard/RiskBreaches.jsx b/src/Pages/AdminDashboard/RiskBreaches.jsx
+index 6369aeb..6d6ba84 100644
+--- a/src/Pages/AdminDashboard/RiskBreaches.jsx
++++ b/src/Pages/AdminDashboard/RiskBreaches.jsx
+@@ -1,712 +1,550 @@
+-import React, { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+-import { useDispatch, useSelector } from "react-redux";
+-import { toast } from "react-toastify";
+-import {
+-  fetchRiskBreaches,
+-  fetchRiskBreachResolutions,
+-  setRiskBreachResolution,
+-  clearRiskBreachResolution,
+-} from "../../store/slices/adminSlice";
+-import { formatBattleId } from "../../utils/numberFormat";
+-import "./BattleInspector.css";
+-import "./transection.css";
+-import DateRangeDropdown from "../../components/DateRangeDropdown";
+-import Pagination from "../../components/Pagination";
+-import { PermissionGate } from "../../hooks/usePermission";
+-
+-const LIMIT = 10;
+-
+-/** API: { success, data: { …, pagination, filters } } */
+-function pickRows(payload) {
+-  if (!payload || typeof payload !== "object") return [];
+-  if (Array.isArray(payload)) return payload;
+-
+-  const inner = payload.data && typeof payload.data === "object" ? payload.data : null;
+-  if (inner) {
+-    if (Array.isArray(inner.rows)) return inner.rows;
+-    if (Array.isArray(inner.risk_breaches)) return inner.risk_breaches;
+-    if (Array.isArray(inner.breaches)) return inner.breaches;
+-    if (Array.isArray(inner.battles)) return inner.battles;
+-    if (Array.isArray(inner.data)) return inner.data;
+-  }
+-
+-  const candidates = [
+-    payload.rows,
+-    payload.risk_breaches,
+-    payload.breaches,
+-    payload.battles,
+-    payload.items,
+-    payload.results,
+-    payload.data,
+-  ];
+-  for (const c of candidates) {
+-    if (Array.isArray(c)) return c;
+-  }
+-  return [];
+-}
+-
+-function pickPagination(payload) {
+-  if (!payload || typeof payload !== "object") return {};
+-  const p = payload.data?.pagination || payload.pagination || {};
+-  return {
+-    currentPage: p.page ?? p.currentPage ?? 1,
+-    totalPages: p.total_pages ?? p.totalPages ?? 1,
+-    total: p.total ?? 0,
+-    limit: p.limit ?? LIMIT,
+-  };
+-}
+-
+-function formatDateTime(value) {
+-  if (value == null || value === "") return "—";
+-  try {
+-    const d = new Date(value);
+-    if (Number.isNaN(d.getTime())) return String(value);
+-    return d.toLocaleString(undefined, {
+-      dateStyle: "short",
+-      timeStyle: "medium",
+-    });
+-  } catch {
+-    return String(value);
+-  }
+-}
+-
+-function fmtNum(value, maxFrac = 6) {
+-  if (value == null || value === "") return "—";
+-  const n = Number(value);
+-  if (Number.isNaN(n)) return String(value);
+-  return n.toLocaleString(undefined, { maximumFractionDigits: maxFrac });
+-}
+-
+-function rowBattleId(row) {
+-  return row?.battleId ?? row?.battle_id ?? row?.id ?? "—";
+-}
+-
+-function rowTimeCell(row) {
+-  return formatDateTime(row?.timestamp ?? row?.created_at);
+-}
+-
+-function rowBattleResultCell(row) {
+-  return row?.battleResult ?? row?.battle_result ?? row?.status ?? "—";
+-}
+-
+-function rowWinnerCell(row) {
+-  return row?.winnerSide ?? row?.winner_side ?? "—";
+-}
+-
+-function renderDetailValue(value) {
+-  if (value == null) return "—";
+-  if (typeof value === "boolean") return value ? "Yes" : "No";
+-  if (typeof value === "number") return fmtNum(value);
+-  if (typeof value === "object") {
+-    try {
+-      return JSON.stringify(value, null, 2);
+-    } catch {
+-      return String(value);
+-    }
+-  }
+-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+-    return formatDateTime(value);
+-  }
+-  return String(value);
+-}
+-
+-/** camelCase / snake_case → readable label (no ALLCAPS run-on) */
+-function humanizeKey(key) {
+-  if (key == null || typeof key !== "string") return String(key);
+-  const spaced = key
+-    .replace(/([a-z\d])([A-Z])/g, "$1 $2")
+-    .replace(/_/g, " ")
+-    .trim();
+-  if (!spaced) return key;
+-  return spaced.replace(/\b\w/g, (ch) => ch.toUpperCase());
+-}
+-
+-const RiskBreaches = () => {
+-  const dispatch = useDispatch();
+-  const {
+-    riskBreaches,
+-    riskBreachesLoading,
+-    riskBreachesError,
+-    riskBreachResolutions,
+-    riskBreachResolutionLoading,
+-  } = useSelector((state) => state.admin);
+-
+-  const [period, setPeriod] = useState("today");
+-  const [startDate, setStartDate] = useState("");
+-  const [endDate, setEndDate] = useState("");
+-  const [battleIdSearch, setBattleIdSearch] = useState("");
+-  const [page, setPage] = useState(1);
+-
+-  const rows = useMemo(() => pickRows(riskBreaches), [riskBreaches]);
+-  const pagination = useMemo(() => pickPagination(riskBreaches), [riskBreaches]);
+-
+-  const [debouncedBattleId, setDebouncedBattleId] = useState("");
+-  const [selectedRow, setSelectedRow] = useState(null);
+-  const [resolutionNotes, setResolutionNotes] = useState({});
+-  const [busyBattleId, setBusyBattleId] = useState(null);
+-
+-  const resolutionByBattleId = useMemo(() => {
+-    const map = new Map();
+-    (riskBreachResolutions || []).forEach((r) => {
+-      if (r?.battleId != null) map.set(r.battleId, r);
+-    });
+-    return map;
+-  }, [riskBreachResolutions]);
+-
+-  const refreshResolutions = useCallback(() => {
+-    dispatch(fetchRiskBreachResolutions({ limit: 200 }));
+-  }, [dispatch]);
+-
+-  useEffect(() => {
+-    refreshResolutions();
+-  }, [refreshResolutions]);
+-
+-  const handleResolutionAction = (battleId, status) => {
+-    setBusyBattleId(battleId);
+-    dispatch(
+-      setRiskBreachResolution({
+-        battle_id: battleId,
+-        status,
+-        notes: resolutionNotes[battleId] || undefined,
+-      }),
+-    )
+-      .unwrap()
+-      .then(() => {
+-        toast.success(`Battle ${battleId} marked ${status}.`);
+-        refreshResolutions();
+-      })
+-      .catch((err) => toast.error(typeof err === "string" ? err : "Failed to update resolution."))
+-      .finally(() => setBusyBattleId(null));
+-  };
+-
+-  const handleClearResolution = (battleId) => {
+-    setBusyBattleId(battleId);
+-    dispatch(clearRiskBreachResolution(battleId))
+-      .unwrap()
+-      .then(() => {
+-        toast.success(`Battle ${battleId} reverted to unresolved.`);
+-        refreshResolutions();
+-      })
+-      .catch((err) => toast.error(typeof err === "string" ? err : "Failed to clear resolution."))
+-      .finally(() => setBusyBattleId(null));
+-  };
+-
+-  useEffect(() => {
+-    const t = setTimeout(() => setDebouncedBattleId(battleIdSearch.trim()), 400);
+-    return () => clearTimeout(t);
+-  }, [battleIdSearch]);
+-
+-  const runFetch = useCallback(
+-    (nextPage = 1) => {
+-      const idTrim = debouncedBattleId;
+-      if (period === "custom" && !idTrim) {
+-        if (!startDate || !endDate) {
+-          return;
+-        }
+-      }
+-
+-      const payload = {
+-        page: nextPage,
+-        limit: LIMIT,
+-      };
+-
+-      if (idTrim) {
+-        payload.battle_id = idTrim;
+-      } else {
+-        payload.period = period;
+-        if (period === "custom") {
+-          payload.start_date = startDate;
+-          payload.end_date = endDate;
+-        }
+-      }
+-
+-      dispatch(fetchRiskBreaches(payload));
+-    },
+-    [debouncedBattleId, dispatch, endDate, period, startDate],
+-  );
+-
+-  useEffect(() => {
+-    if (period === "custom" && !debouncedBattleId) {
+-      if (!startDate || !endDate) {
+-        return;
+-      }
+-    }
+-    setPage(1);
+-    runFetch(1);
+-  }, [period, startDate, endDate, debouncedBattleId, runFetch]);
+-
+-  const goPage = (n) => {
+-    if (n < 1) return;
+-    const max = pagination.totalPages || 1;
+-    if (n > max) return;
+-    setPage(n);
+-    runFetch(n);
+-  };
+-
+-  const appliedFilters = riskBreaches?.data?.filters;
+-  const summary = riskBreaches?.data?.summary;
+-
+-  const detailEntries = useMemo(() => {
+-    if (!selectedRow || typeof selectedRow !== "object") return [];
+-    return Object.keys(selectedRow)
+-      .sort()
+-      .map((k) => [k, selectedRow[k]]);
+-  }, [selectedRow]);
+-
+-  const countsBreakdown = useMemo(() => {
+-    const resultCounts = {};
+-    const winnerCounts = {};
+-
+-    rows.forEach((row) => {
+-      const res = (rowBattleResultCell(row) || "—").toString().toUpperCase();
+-      if (res && res !== "—") {
+-        resultCounts[res] = (resultCounts[res] || 0) + 1;
+-      }
+-      const win = (rowWinnerCell(row) || "—").toString().toUpperCase();
+-      if (win && win !== "—") {
+-        winnerCounts[win] = (winnerCounts[win] || 0) + 1;
+-      }
+-    });
+-
+-    return { resultCounts, winnerCounts };
+-  }, [rows]);
+-
+-  if (selectedRow) {
+-    const primitives = detailEntries.filter(([_, v]) => v === null || typeof v !== "object");
+-    const complex = detailEntries.filter(([_, v]) => v !== null && typeof v === "object");
+-
+-    return (
+-      <div className="battle-inspector risk-breach-detail-page">
+-        {/* Top Header & Back Button */}
+-        <div className="section-card" style={{ marginBottom: '25px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
+-          <div className="section-header" style={{ margin: 0 }}>
+-            <h3 className="section-title">Risk Breach Details</h3>
+-            <p className="section-subtitle" style={{ marginBottom: 0 }}>
+-              Comprehensive breach metrics & logs for Battle ID: <strong style={{ color: '#00d6de' }}>{formatBattleId(rowBattleId(selectedRow))}</strong>
+-            </p>
+-          </div>
+-          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+-            <span className={`status-badge ${rowBattleResultCell(selectedRow).toLowerCase()}`} style={{ fontSize: '13px', padding: '6px 14px' }}>
+-              {rowBattleResultCell(selectedRow)}
+-            </span>
+-            <button
+-              type="button"
+-              className="back"
+-              onClick={() => setSelectedRow(null)}
+-              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+-            >
+-              Back
+-            </button>
+-          </div>
+-        </div>
+-
+-        {/* Overview Key Cards */}
+-        <div className="risk-breach-overview-grid">
+-          <div className="risk-breach-overview-card">
+-            <span className="risk-breach-overview-label">Battle ID</span>
+-            <span className="risk-breach-overview-value" style={{ color: '#00d6de' }}>
+-              {formatBattleId(rowBattleId(selectedRow))}
+-            </span>
+-          </div>
+-          <div className="risk-breach-overview-card">
+-            <span className="risk-breach-overview-label">Breach Time</span>
+-            <span className="risk-breach-overview-value" style={{ fontSize: '15px' }}>
+-              {rowTimeCell(selectedRow)}
+-            </span>
+-          </div>
+-          <div className="risk-breach-overview-card">
+-            <span className="risk-breach-overview-label">Result Status</span>
+-            <span className="risk-breach-overview-value">
+-              {rowBattleResultCell(selectedRow)}
+-              {countsBreakdown.resultCounts[rowBattleResultCell(selectedRow).toUpperCase()] != null && (
+-                <span style={{ fontSize: '12px', color: '#888', marginLeft: '6px', fontWeight: '500' }}>
+-                  (Total: {countsBreakdown.resultCounts[rowBattleResultCell(selectedRow).toUpperCase()]})
+-                </span>
+-              )}
+-            </span>
+-          </div>
+-          <div className="risk-breach-overview-card">
+-            <span className="risk-breach-overview-label">Winner Side</span>
+-            <span className="risk-breach-overview-value" style={{ color: '#00e676' }}>
+-              {rowWinnerCell(selectedRow)}
+-              {countsBreakdown.winnerCounts[rowWinnerCell(selectedRow).toUpperCase()] != null && (
+-                <span style={{ fontSize: '12px', color: '#888', marginLeft: '6px', fontWeight: '500' }}>
+-                  (Total: {countsBreakdown.winnerCounts[rowWinnerCell(selectedRow).toUpperCase()]})
+-                </span>
+-              )}
+-            </span>
+-          </div>
+-        </div>
+-
+-        {/* Primitive Details Grid */}
+-        {primitives.length > 0 && (
+-          <div className="section-card">
+-            <div className="section-header" style={{ marginBottom: '20px' }}>
+-              <h4 className="section-title" style={{ fontSize: '16px', color: '#fff' }}>General Information</h4>
+-              <p className="section-subtitle">All parameters and field values recorded during breach.</p>
+-            </div>
+-            <div className="risk-breach-details-grid">
+-              {primitives.map(([key, value]) => (
+-                <div key={key} className="risk-breach-detail-card">
+-                  <span className="risk-breach-card-label">{humanizeKey(key)}</span>
+-                  <span className="risk-breach-card-value">
+-                    {renderDetailValue(value)}
+-                  </span>
+-                </div>
+-              ))}
+-            </div>
+-          </div>
+-        )}
+-
+-        {/* Complex Objects Section */}
+-        {complex.length > 0 && (
+-          <div className="section-card">
+-            <div className="section-header" style={{ marginBottom: '20px' }}>
+-              <h4 className="section-title" style={{ fontSize: '16px', color: '#fff' }}>Structured Data & Payloads</h4>
+-              <p className="section-subtitle">Nested technical details and array data.</p>
+-            </div>
+-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+-              {complex.map(([key, value]) => (
+-                <div key={key} className="risk-breach-nested-card">
+-                  <span className="risk-breach-card-label" style={{ fontSize: '14px' }}>
+-                    {humanizeKey(key)}
+-                  </span>
+-                  <pre className="capital-flow-raw-json">
+-                    {renderDetailValue(value)}
+-                  </pre>
+-                </div>
+-              ))}
+-            </div>
+-          </div>
+-        )}
+-
+-        {/* Footer Action */}
+-        <div className="section-card" style={{ display: 'flex', justifyContent: 'flex-end' }}>
+-          <button
+-            type="button"
+-            className="back"
+-            onClick={() => setSelectedRow(null)}
+-            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+-          >
+-            Back
+-          </button>
+-        </div>
+-      </div>
+-    );
+-  }
+-
+-  return (
+-    <div className="battle-inspector">
+-      <div className="section-card" style={{ marginBottom: '25px' }}>
+-        <div className="section-header" style={{ marginBottom: 0 }}>
+-          <h3 className="section-title">Risk breaches</h3>
+-          <p className="section-subtitle" style={{ marginTop: '5px', marginBottom: 0 }}>
+-            Filter by date range or battle ID. Open Details for full record.
+-          </p>
+-        </div>
+-        <div className="rotation-info-box">
+-          <span className="rotation-italic-text">
+-            A "breach" here means a battle where the platform paid out an unusually large share of what it
+-            collected — the payout owed came close to (or exceeded) what losers put in, leaving little or no
+-            margin for the house. This page lists those battles so an admin can review them, not a claim that
+-            anything went wrong — some thin-margin rounds happen naturally.
+-          </span>
+-        </div>
+-      </div>
+-      <div className="section-card">
+-        <div className="battle-inspector-filters">
+-          <div className="form-group battle-inspector-field battle-inspector-field--grow">
+-            <label className="form-label" htmlFor="rb-battle-id">
+-              Battle ID (search)
+-            </label>
+-            <input
+-              id="rb-battle-id"
+-              type="text"
+-              inputMode="numeric"
+-              className="form-input"
+-              placeholder="Enter battle id"
+-              value={battleIdSearch}
+-              onChange={(e) => setBattleIdSearch(e.target.value)}
+-            />
+-          </div>
+-
+-          <div className="form-group battle-inspector-field" style={{ minWidth: 260 }}>
+-            <label className="form-label">Date Range</label>
+-            <DateRangeDropdown 
+-              onChange={(range) => {
+-                setPeriod("custom");
+-                if (range.startDate) {
+-                  setStartDate(range.startDate.toISOString().split('T')[0]);
+-                }
+-                if (range.endDate) {
+-                  setEndDate(range.endDate.toISOString().split('T')[0]);
+-                }
+-              }}
+-            />
+-          </div>
+-        </div>
+-        <div className="rotation-info-box">
+-          <span className="rotation-italic-text">
+-            <strong>Battle ID:</strong> jump straight to one battle's risk breach record. <strong>Date Range:</strong> show breaches from a certain time period. Typing a Battle ID switches off the date filter, since you're looking for one specific battle.
+-          </span>
+-        </div>
+-        {battleIdSearch.trim() ? (
+-          <p className="battle-id-search-hint" role="status" aria-live="polite">
+-            Battle ID search is active — date filters are turned off. Clear the
+-            Battle ID field to use date filters again.
+-          </p>
+-        ) : null}
+-      </div>
+-
+-      {riskBreachesError && (
+-        <div className="battle-inspector-error" role="alert">
+-          {riskBreachesError}
+-        </div>
+-      )}
+-
+-      {summary && typeof summary === "object" && (
+-        <div className="section-card risk-breaches-summary-card">
+-          <div className="section-header">
+-            <h3 className="section-title">Summary</h3>
+-            <p className="section-subtitle">Aggregates for the current filters (server).</p>
+-          </div>
+-          <div className="risk-breaches-summary-grid">
+-            <div className="risk-breaches-summary-item">
+-              <span className="risk-breaches-summary-label">Breached battles</span>
+-              <span className="risk-breaches-summary-value">
+-                {fmtNum(summary.totalBreachedBattles, 0)}
+-              </span>
+-            </div>
+-            <div className="risk-breaches-summary-item">
+-              <span className="risk-breaches-summary-label">Total out-of-pocket paid</span>
+-              <span className="risk-breaches-summary-value">
+-                {fmtNum(summary.totalOutOfPocketPaid)}
+-              </span>
+-            </div>
+-            <div className="risk-breaches-summary-item">
+-              <span className="risk-breaches-summary-label">Largest single breach</span>
+-              <span className="risk-breaches-summary-value">
+-                {fmtNum(summary.largestSingleBreach)}
+-              </span>
+-            </div>
+-            <div className="risk-breaches-summary-item">
+-              <span className="risk-breaches-summary-label">Latest breach at</span>
+-              <span className="risk-breaches-summary-value risk-breaches-summary-value--wrap">
+-                {formatDateTime(summary.latestBreachAt)}
+-              </span>
+-            </div>
+-            <div className="risk-breaches-summary-item">
+-              <span className="risk-breaches-summary-label">Total settled battles</span>
+-              <span className="risk-breaches-summary-value">
+-                {fmtNum(summary.totalSettledBattles, 0)}
+-              </span>
+-            </div>
+-            <div className="risk-breaches-summary-item">
+-              <span className="risk-breaches-summary-label">Breach rate</span>
+-              <span className="risk-breaches-summary-value">
+-                {summary.breachRate == null
+-                  ? "—"
+-                  : Number(summary.breachRate) <= 1 && Number(summary.breachRate) >= 0
+-                    ? `${(Number(summary.breachRate) * 100).toFixed(2)}%`
+-                    : fmtNum(summary.breachRate)}
+-              </span>
+-            </div>
+-
+-            {/* Result Status Counts */}
+-            <div className="risk-breaches-summary-item" style={{ gridColumn: 'span 2', minWidth: '220px' }}>
+-              <span className="risk-breaches-summary-label">Result Status Counts</span>
+-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+-                {Object.keys(countsBreakdown.resultCounts).length > 0 ? (
+-                  Object.entries(countsBreakdown.resultCounts).map(([status, count]) => (
+-                    <span 
+-                      key={status} 
+-                      className={`status-badge ${status.toLowerCase()}`}
+-                      style={{ fontSize: '12px', padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+-                    >
+-                      {status}: <strong>{count}</strong>
+-                    </span>
+-                  ))
+-                ) : (
+-                  <span style={{ fontSize: '13px', color: '#888' }}>No status data</span>
+-                )}
+-              </div>
+-            </div>
+-
+-            {/* Winner Side Counts */}
+-            <div className="risk-breaches-summary-item" style={{ gridColumn: 'span 2', minWidth: '220px' }}>
+-              <span className="risk-breaches-summary-label">Winner Side Counts</span>
+-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+-                {Object.keys(countsBreakdown.winnerCounts).length > 0 ? (
+-                  Object.entries(countsBreakdown.winnerCounts).map(([side, count]) => (
+-                    <span 
+-                      key={side} 
+-                      style={{ 
+-                        fontSize: '12px', 
+-                        padding: '4px 10px', 
+-                        borderRadius: '20px',
+-                        background: side.includes('BUY') || side.includes('BULL') || side.includes('WIN') ? 'rgba(0, 230, 118, 0.15)' : 'rgba(255, 45, 134, 0.15)',
+-                        color: side.includes('BUY') || side.includes('BULL') || side.includes('WIN') ? '#00e676' : '#ff2d86',
+-                        border: side.includes('BUY') || side.includes('BULL') || side.includes('WIN') ? '1px solid rgba(0, 230, 118, 0.4)' : '1px solid rgba(255, 45, 134, 0.4)',
+-                        fontWeight: 600,
+-                        display: 'inline-flex',
+-                        alignItems: 'center',
+-                        gap: '6px'
+-                      }}
+-                    >
+-                      {side}: <strong>{count}</strong>
+-                    </span>
+-                  ))
+-                ) : (
+-                  <span style={{ fontSize: '13px', color: '#888' }}>No winner data</span>
+-                )}
+-              </div>
+-            </div>
+-          </div>
+-          <div className="rotation-info-box">
+-            <span className="rotation-italic-text">
+-              <strong>Breached battles:</strong> how many battles in this filter matched the breach definition
+-              above. <strong>Total out-of-pocket paid:</strong> combined amount the house paid beyond what it
+-              collected across those battles. <strong>Largest single breach:</strong> the single worst case.{' '}
+-              <strong>Total settled battles:</strong> everything that finished in this window, breached or not
+-              — this is what breach rate is measured against. <strong>Breach rate:</strong> breached ÷ settled,
+-              as a percentage. <strong>Result/Winner Status Counts:</strong> a quick breakdown of how those
+-              breached battles ended.
+-            </span>
+-          </div>
+-        </div>
+-      )}
+-
+-      <div className="section-card battle-inspector-table-card">
+-        <div className="section-header">
+-          <h3 className="section-title">Results</h3>
+-          <p className="section-subtitle">
+-            Page {pagination.currentPage || page} of {pagination.totalPages || 1} ·{" "}
+-            {pagination.limit ?? LIMIT} per page
+-            {pagination.total != null ? ` · ${pagination.total} records` : ""}
+-          </p>
+-        </div>
+-        <div className="rotation-info-box">
+-          <span className="rotation-italic-text">
+-            <strong>Details:</strong> opens the full record for that battle. <strong>Acknowledge:</strong> marks
+-            it as "seen" without closing it out. <strong>Resolve:</strong> marks it as fully reviewed and
+-            handled. <strong>Clear:</strong> removes whichever mark was set, back to Unresolved. The optional
+-            note is saved alongside whichever action you take.
+-          </span>
+-        </div>
+-
+-        <div className="admin-table-wrapper battle-inspector-table-wrap">
+-          <table className="admin-table battle-inspector-table">
+-            <thead>
+-              <tr>
+-                <th>Battle ID</th>
+-                <th>Time</th>
+-                <th>Result</th>
+-                <th>Winner</th>
+-                <th>Status</th>
+-                <th>Action</th>
+-              </tr>
+-            </thead>
+-            <tbody>
+-              {riskBreachesLoading && !rows.length ? (
+-                <tr>
+-                  <td colSpan={6} className="battle-inspector-empty">Loading…</td>
+-                </tr>
+-              ) : !rows.length ? (
+-                <tr>
+-                  <td colSpan={6} className="battle-inspector-empty">No risk breaches for this query.</td>
+-                </tr>
+-              ) : (
+-                rows.map((row, idx) => {
+-                  const battleId = row?.battleId ?? row?.battle_id ?? row?.id ?? null;
+-                  const resolution = battleId != null ? resolutionByBattleId.get(battleId) : null;
+-                  const isBusy = busyBattleId === battleId;
+-                  return (
+-                    <tr key={battleId ?? idx}>
+-                      <td className="table-id">{formatBattleId(rowBattleId(row))}</td>
+-                      <td>{rowTimeCell(row)}</td>
+-                      <td>{rowBattleResultCell(row)}</td>
+-                      <td>{rowWinnerCell(row)}</td>
+-                      <td>
+-                        <span className={`status-badge ${resolution?.status === "resolved" ? "completed" : resolution?.status === "acknowledged" ? "warning" : "fail"}`}>
+-                          {resolution?.status ? resolution.status.toUpperCase() : "UNRESOLVED"}
+-                        </span>
+-                        {resolution?.notes ? (
+-                          <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>{resolution.notes}</div>
+-                        ) : null}
+-                      </td>
+-                      <td>
+-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+-                          <button
+-                            type="button"
+-                            className="table-btn"
+-                            onClick={() => setSelectedRow(row)}
+-                          >
+-                            Details
+-                          </button>
+-                          {battleId != null && (
+-                            <PermissionGate permission="riskBreaches.resolve">
+-                              <input
+-                                type="text"
+-                                className="form-input"
+-                                placeholder="Notes (optional)"
+-                                style={{ maxWidth: 140, fontSize: 12 }}
+-                                value={resolutionNotes[battleId] || ""}
+-                                onChange={(e) =>
+-                                  setResolutionNotes((prev) => ({ ...prev, [battleId]: e.target.value }))
+-                                }
+-                              />
+-                              {resolution?.status !== "acknowledged" && (
+-                                <button
+-                                  type="button"
+-                                  className="table-btn"
+-                                  disabled={isBusy}
+-                                  onClick={() => handleResolutionAction(battleId, "acknowledged")}
+-                                >
+-                                  Acknowledge
+-                                </button>
+-                              )}
+-                              {resolution?.status !== "resolved" && (
+-                                <button
+-                                  type="button"
+-                                  className="table-btn"
+-                                  disabled={isBusy}
+-                                  onClick={() => handleResolutionAction(battleId, "resolved")}
+-                                >
+-                                  Resolve
+-                                </button>
+-                              )}
+-                              {resolution && (
+-                                <button
+-                                  type="button"
+-                                  className="table-btn"
+-                                  disabled={isBusy}
+-                                  onClick={() => handleClearResolution(battleId)}
+-                                >
+-                                  Clear
+-                                </button>
+-                              )}
+-                            </PermissionGate>
+-                          )}
+-                        </div>
+-                      </td>
+-                    </tr>
+-                  );
+-                })
+-              )}
+-            </tbody>
+-          </table>
+-        </div>
+-
+-        <Pagination
+-          currentPage={pagination.currentPage || page}
+-          totalPages={pagination.totalPages || 1}
+-          totalItems={pagination.total ?? 0}
+-          perPage={pagination.limit}
+-          onPageChange={goPage}
+-        />
+-      </div>
+-    </div>
+-  );
+-};
+-
+-export default RiskBreaches;
++import React, { useCallback, useEffect, useMemo, useState } from "react";
++import { useDispatch, useSelector } from "react-redux";
++import { toast } from "react-toastify";
++import {
++  fetchRiskBreaches,
++  fetchRiskBreachDetail,
++  setRiskBreachResolution,
++  clearRiskBreachResolution,
++} from "../../store/slices/adminSlice";
++import { formatBattleId } from "../../utils/numberFormat";
++import "./BattleInspector.css";
++import "./transection.css";
++import DateRangeDropdown from "../../components/DateRangeDropdown";
++import Pagination from "../../components/Pagination";
++import { PermissionGate } from "../../hooks/usePermission";
++
++const LIMIT = 10;
++
++const PERIOD_OPTIONS = [
++  { value: "today", label: "Today" },
++  { value: "week", label: "This week" },
++  { value: "month", label: "This month" },
++  { value: "all", label: "All time" },
++  { value: "custom", label: "Custom range" },
++];
++
++const SCOPE_OPTIONS = [
++  { value: "all", label: "All flagged rounds" },
++  { value: "breach_only", label: "Breach only (paid beyond the real pool)" },
++  { value: "company_funds_only", label: "Cost the house cash" },
++  { value: "npc_loss_only", label: "Real users won" },
++];
++
++const MODEL_LABEL = { directive: "Organic (directive)", model_a: "Legacy (Model A)", tie: "Tie" };
++
++function formatDateTime(value) {
++  if (value == null || value === "") return "—";
++  const d = new Date(value);
++  if (Number.isNaN(d.getTime())) return String(value);
++  return d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "medium" });
++}
++
++function fmtMoney(value) {
++  if (value == null || value === "") return "—";
++  const n = Number(value);
++  if (!Number.isFinite(n)) return String(value);
++  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
++}
++
++function fmtSigned(value) {
++  if (value == null || value === "") return "—";
++  const n = Number(value);
++  if (!Number.isFinite(n)) return String(value);
++  const s = `$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
++  return n < 0 ? `−${s}` : n > 0 ? `+${s}` : s;
++}
++
++function fmtPct(value) {
++  if (value == null) return "—";
++  const n = Number(value);
++  return Number.isFinite(n) ? `${n.toFixed(2)}%` : "—";
++}
++
++/** Local-day boundaries as exact instants — the server no longer has to guess the browser's zone. */
++function localDayStart(d) {
++  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).toISOString();
++}
++function localDayEnd(d) {
++  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).toISOString();
++}
++
++function ResolutionBadge({ resolution }) {
++  const status = resolution?.status;
++  const cls = status === "resolved" ? "completed" : status === "acknowledged" ? "warning" : "fail";
++  return (
++    <span className={`status-badge ${cls}`} title={resolution?.resolvedBy ? `by ${resolution.resolvedBy.name} · ${formatDateTime(resolution.updatedAt)}` : undefined}>
++      {status ? status.toUpperCase() : "UNRESOLVED"}
++    </span>
++  );
++}
++
++function SignedCell({ value }) {
++  const n = Number(value);
++  const color = !Number.isFinite(n) || n === 0 ? undefined : n < 0 ? "#ff2d86" : "#00e676";
++  return <strong style={{ color }}>{fmtSigned(value)}</strong>;
++}
++
++const RiskBreaches = () => {
++  const dispatch = useDispatch();
++  const {
++    riskBreaches,
++    riskBreachesLoading,
++    riskBreachesError,
++    riskBreachDetail,
++    riskBreachDetailLoading,
++    riskBreachDetailError,
++  } = useSelector((state) => state.admin);
++
++  const [period, setPeriod] = useState("today");
++  const [customRange, setCustomRange] = useState(null);
++  const [scope, setScope] = useState("all");
++  const [battleIdSearch, setBattleIdSearch] = useState("");
++  const [debouncedBattleId, setDebouncedBattleId] = useState("");
++  const [selectedBattleId, setSelectedBattleId] = useState(null);
++  const [resolutionNotes, setResolutionNotes] = useState({});
++  const [busyBattleId, setBusyBattleId] = useState(null);
++
++  const data = riskBreaches?.data;
++  const rows = useMemo(() => (Array.isArray(data?.rows) ? data.rows : []), [data]);
++  const summary = data?.summary;
++  const pagination = data?.pagination || {};
++  const page = pagination.page || 1;
++  const appliedFilters = data?.filters;
++
++  useEffect(() => {
++    const t = setTimeout(() => setDebouncedBattleId(battleIdSearch.trim()), 400);
++    return () => clearTimeout(t);
++  }, [battleIdSearch]);
++
++  const runFetch = useCallback(
++    (nextPage = 1) => {
++      const payload = { page: nextPage, limit: LIMIT, scope };
++      if (debouncedBattleId) {
++        payload.battle_id = debouncedBattleId;
++      } else {
++        payload.period = period;
++        if (period === "custom") {
++          if (!customRange?.startDate || !customRange?.endDate) return;
++          payload.start_at = localDayStart(customRange.startDate);
++          payload.end_at = localDayEnd(customRange.endDate);
++        }
++      }
++      dispatch(fetchRiskBreaches(payload));
++    },
++    [customRange, debouncedBattleId, dispatch, period, scope],
++  );
++
++  useEffect(() => {
++    runFetch(1);
++  }, [runFetch]);
++
++  useEffect(() => {
++    if (selectedBattleId != null) dispatch(fetchRiskBreachDetail(selectedBattleId));
++  }, [dispatch, selectedBattleId]);
++
++  const goPage = (n) => {
++    const max = pagination.totalPages || 1;
++    if (n < 1 || n > max) return;
++    runFetch(n);
++  };
++
++  const afterResolutionChange = () => {
++    runFetch(page);
++    if (selectedBattleId != null) dispatch(fetchRiskBreachDetail(selectedBattleId));
++  };
++
++  const handleResolutionAction = (battleId, status) => {
++    setBusyBattleId(battleId);
++    dispatch(setRiskBreachResolution({ battle_id: battleId, status, notes: resolutionNotes[battleId] ?? "" }))
++      .unwrap()
++      .then(() => {
++        toast.success(`Battle ${battleId} marked ${status}.`);
++        afterResolutionChange();
++      })
++      .catch((err) => toast.error(typeof err === "string" ? err : "Failed to update resolution."))
++      .finally(() => setBusyBattleId(null));
++  };
++
++  const handleClearResolution = (battleId) => {
++    setBusyBattleId(battleId);
++    dispatch(clearRiskBreachResolution(battleId))
++      .unwrap()
++      .then(() => {
++        toast.success(`Battle ${battleId} reverted to unresolved.`);
++        afterResolutionChange();
++      })
++      .catch((err) => toast.error(typeof err === "string" ? err : "Failed to clear resolution."))
++      .finally(() => setBusyBattleId(null));
++  };
++
++  const renderResolutionControls = (battleId, resolution) => {
++    const isBusy = busyBattleId === battleId;
++    return (
++      <PermissionGate permission="riskBreaches.resolve">
++        <input
++          type="text"
++          className="form-input"
++          placeholder="Notes (optional)"
++          style={{ maxWidth: 160, fontSize: 12 }}
++          value={resolutionNotes[battleId] ?? resolution?.notes ?? ""}
++          onChange={(e) => setResolutionNotes((prev) => ({ ...prev, [battleId]: e.target.value }))}
++        />
++        {resolution?.status !== "acknowledged" && (
++          <button type="button" className="table-btn" disabled={isBusy} onClick={() => handleResolutionAction(battleId, "acknowledged")}>
++            Acknowledge
++          </button>
++        )}
++        {resolution?.status !== "resolved" && (
++          <button type="button" className="table-btn" disabled={isBusy} onClick={() => handleResolutionAction(battleId, "resolved")}>
++            Resolve
++          </button>
++        )}
++        {resolution && (
++          <button type="button" className="table-btn" disabled={isBusy} onClick={() => handleClearResolution(battleId)}>
++            Clear
++          </button>
++        )}
++      </PermissionGate>
++    );
++  };
++
++  if (selectedBattleId != null) {
++    const d = riskBreachDetail;
++    const b = d?.battle;
++    const pots = d?.pots;
++    const breach = d?.breach;
++    const sb = d?.settlementBreakdown;
++    return (
++      <div className="battle-inspector risk-breach-detail-page">
++        <div className="section-card" style={{ marginBottom: "25px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "15px" }}>
++          <div className="section-header" style={{ margin: 0 }}>
++            <h3 className="section-title">Risk Breach Details</h3>
++            <p className="section-subtitle" style={{ marginBottom: 0 }}>
++              Settlement audit for Battle ID: <strong style={{ color: "#00d6de" }}>{formatBattleId(selectedBattleId)}</strong>
++            </p>
++          </div>
++          <div style={{ display: "flex", alignItems: "center", gap: "15px" }}>
++            {b && <span className={`status-badge ${String(b.winnerSide).toLowerCase()}`} style={{ fontSize: "13px", padding: "6px 14px" }}>{b.winnerSide} WON</span>}
++            {d && <ResolutionBadge resolution={d.resolution} />}
++            <button type="button" className="back" onClick={() => setSelectedBattleId(null)}>Back</button>
++          </div>
++        </div>
++
++        {riskBreachDetailLoading && <div className="section-card"><div className="battle-inspector-empty">Loading…</div></div>}
++        {!riskBreachDetailLoading && riskBreachDetailError && (
++          <div className="section-card"><div className="battle-inspector-error" role="alert">{String(riskBreachDetailError)}</div></div>
++        )}
++
++        {!riskBreachDetailLoading && d && (
++          <>
++            <div className="risk-breach-overview-grid">
++              <div className="risk-breach-overview-card">
++                <span className="risk-breach-overview-label">Settled at</span>
++                <span className="risk-breach-overview-value" style={{ fontSize: "15px" }}>{formatDateTime(b.settledAt)}</span>
++              </div>
++              <div className="risk-breach-overview-card">
++                <span className="risk-breach-overview-label">Settlement model</span>
++                <span className="risk-breach-overview-value" style={{ fontSize: "15px" }}>
++                  {MODEL_LABEL[b.model] || b.model}
++                  {b.valuationSource === "recomputed" && <span title="Settled before the settlement record existed; rebuilt from the rows with today's fee rate" style={{ color: "#f59e0b", marginLeft: 6, fontSize: 12 }}>(rebuilt)</span>}
++                </span>
++              </div>
++              <div className="risk-breach-overview-card">
++                <span className="risk-breach-overview-label">Shortfall (paid beyond the real pool)</span>
++                <span className="risk-breach-overview-value" style={{ color: breach.isBreach ? "#ff2d86" : "#00e676" }}>{fmtMoney(breach.breachAmount)}</span>
++              </div>
++              <div className="risk-breach-overview-card">
++                <span className="risk-breach-overview-label">House cash result</span>
++                <span className="risk-breach-overview-value"><SignedCell value={breach.houseCashResult} /></span>
++              </div>
++            </div>
++
++            <div className="section-card">
++              <div className="rotation-info-box"><span className="rotation-italic-text">{breach.diagnosticReason}</span></div>
++              <div className="risk-breach-details-grid">
++                {[
++                  ["Winner side", b.winnerSide, false],
++                  ["Winner rule", b.winnerReason, false],
++                  ["Fee rate", `${(Number(b.platformFeeRate) * 100).toFixed(2)}%`, false],
++                  ["Commission source", pots.commissionSource, false],
++                  ["Real BUY (net of hedges)", fmtMoney(pots.realBuyPot), false],
++                  ["Real SELL (net of hedges)", fmtMoney(pots.realSellPot), false],
++                  ["NPC BUY", fmtMoney(pots.npcBuyPot), false],
++                  ["NPC SELL", fmtMoney(pots.npcSellPot), false],
++                  ["Real losing volume", fmtMoney(pots.losingSideAmountUsed), false],
++                  ["Commission taken", fmtMoney(pots.platformFee), false],
++                  ["Net real loser pool", fmtMoney(pots.validDistributablePool), false],
++                  ["Real winners' profit paid", fmtMoney(breach.actualPayoutPaid), false],
++                  ["Funded by NPC / house money", fmtMoney(breach.simulatorFundedRealWinners), false],
++                  ["Hedged users", pots.hedgedUserCount, false],
++                  ["Real users won?", breach.isNpcLoss ? "Yes" : "No", false],
++                  ["Cost the house cash?", breach.didUseCompanyFunds ? "Yes" : "No", false],
++                ].map(([label, value]) => (
++                  <div key={label} className="risk-breach-detail-card">
++                    <span className="risk-breach-card-label">{label}</span>
++                    <span className="risk-breach-card-value">{value == null || value === "" ? "—" : String(value)}</span>
++                  </div>
++                ))}
++              </div>
++            </div>
++
++            {sb && (
++              <div className="section-card">
++                <div className="section-header" style={{ marginBottom: "12px" }}>
++                  <h4 className="section-title" style={{ fontSize: "16px", color: "#fff" }}>Settlement breakdown</h4>
++                  <p className="section-subtitle">What settlement did with the money (from the round's own settlement record).</p>
++                </div>
++                <div className="risk-breach-details-grid">
++                  {[
++                    ["Real losing volume", fmtMoney(sb.realLosingVolume)],
++                    ["Commission", fmtMoney(sb.commission)],
++                    ["Net real loser pool", fmtMoney(sb.netRealLoserPool)],
++                    ["Real winners' profit", fmtMoney(sb.realWinnersProfit)],
++                    ["House retained (unpaid pool)", fmtMoney(sb.houseRetained)],
++                    ["Shortfall", fmtMoney(sb.shortfall)],
++                    ["NPC losing volume", fmtMoney(sb.simLosingVolume)],
++                    ["NPC winning volume", fmtMoney(sb.simWinningVolume)],
++                    ["NPC profit (after cap)", fmtMoney(sb.simProfit)],
++                    ["Surplus pushed to real winners", fmtMoney(sb.surplusToReal)],
++                    ["Simulator net", fmtSigned(sb.simulatorNet)],
++                    ["Model's company net", fmtSigned(sb.companyNet)],
++                    ["House cash result", fmtSigned(sb.houseCashResult)],
++                    ["Paid to NPC winners", fmtMoney(sb.distributedToNpcWinners)],
++                    ["Refunded to real users", fmtMoney(sb.refundedToRealUsers)],
++                    ["Ledger credits to winners (stake + profit)", fmtMoney(sb.ledgerPayoutCreditsTotal)],
++                    ["Stakes won: principal returned", fmtMoney(sb.stakesWonPrincipal)],
++                    ["Stakes won: profit (DB)", fmtMoney(sb.stakesWonProfit)],
++                    ["Profit mismatch (record vs DB)", fmtMoney(sb.profitMismatch)],
++                  ].map(([label, value]) => (
++                    <div key={label} className="risk-breach-detail-card">
++                      <span className="risk-breach-card-label">{label}</span>
++                      <span className="risk-breach-card-value">{value}</span>
++                    </div>
++                  ))}
++                </div>
++              </div>
++            )}
++
++            <div className="section-card battle-inspector-table-card">
++              <div className="section-header"><h4 className="section-title" style={{ fontSize: "16px", color: "#fff" }}>Real users</h4></div>
++              <div className="admin-table-wrapper battle-inspector-table-wrap">
++                <table className="admin-table battle-inspector-table">
++                  <thead>
++                    <tr>
++                      <th>User</th><th>BUY</th><th>SELL</th><th>Hedged</th><th>Net side</th><th>Net exposure</th><th>Profit paid</th><th>Lost</th><th>Refunded</th><th>PnL</th><th>Result</th>
++                    </tr>
++                  </thead>
++                  <tbody>
++                    {(d.userDetails || []).length === 0 ? (
++                      <tr><td colSpan={11} className="battle-inspector-empty">No real users in this round.</td></tr>
++                    ) : (
++                      d.userDetails.map((u) => (
++                        <tr key={u.userId}>
++                          <td><span className="table-id">{u.userId}</span> {u.userName}{u.isRpc ? <span title="RPC / house account — not counted as real money" style={{ color: "#f59e0b", marginLeft: 4 }}>(house)</span> : null}</td>
++                          <td>{fmtMoney(u.buyStake)}</td>
++                          <td>{fmtMoney(u.sellStake)}</td>
++                          <td>{fmtMoney(u.hedgedAmount)}</td>
++                          <td>{u.netSide}</td>
++                          <td>{fmtMoney(u.netExposure)}</td>
++                          <td>{fmtMoney(u.payoutAmount)}</td>
++                          <td>{fmtMoney(u.lostStake)}</td>
++                          <td>{fmtMoney(u.refundedAmount)}</td>
++                          <td><SignedCell value={u.pnlAmount} /></td>
++                          <td><span className={`status-badge ${u.resultStatus === "WINNER" ? "completed" : u.resultStatus === "REFUNDED" ? "warning" : "fail"}`}>{u.resultStatus}</span></td>
++                        </tr>
++                      ))
++                    )}
++                  </tbody>
++                </table>
++              </div>
++            </div>
++
++            <div className="section-card battle-inspector-table-card">
++              <div className="section-header"><h4 className="section-title" style={{ fontSize: "16px", color: "#fff" }}>NPC traders</h4></div>
++              <div className="admin-table-wrapper battle-inspector-table-wrap">
++                <table className="admin-table battle-inspector-table">
++                  <thead><tr><th>NPC</th><th>Side</th><th>Trades</th><th>Stake</th><th>Payout</th><th>Result</th></tr></thead>
++                  <tbody>
++                    {(d.npcDetails || []).length === 0 ? (
++                      <tr><td colSpan={6} className="battle-inspector-empty">No NPC trades in this round.</td></tr>
++                    ) : (
++                      d.npcDetails.map((n) => (
++                        <tr key={`${n.npcId}-${n.side}`}>
++                          <td><span className="table-id">{n.npcId}</span> {n.npcLabel}</td>
++                          <td>{n.side}</td>
++                          <td>{n.trades}</td>
++                          <td>{fmtMoney(n.stakeAmount)}</td>
++                          <td>{fmtMoney(n.payoutAmount)}</td>
++                          <td><span className={`status-badge ${n.isWinner ? "completed" : "fail"}`}>{n.isWinner ? "WON" : "LOST"}</span></td>
++                        </tr>
++                      ))
++                    )}
++                  </tbody>
++                </table>
++              </div>
++            </div>
++
++            <div className="section-card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
++              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
++                <ResolutionBadge resolution={d.resolution} />
++                {d.resolution?.notes ? <span style={{ fontSize: 12, color: "#888" }}>{d.resolution.notes}</span> : null}
++                {renderResolutionControls(selectedBattleId, d.resolution)}
++              </div>
++              <button type="button" className="back" onClick={() => setSelectedBattleId(null)}>Back</button>
++            </div>
++          </>
++        )}
++      </div>
++    );
++  }
++
++  return (
++    <div className="battle-inspector">
++      <div className="section-card" style={{ marginBottom: "25px" }}>
++        <div className="section-header" style={{ marginBottom: 0 }}>
++          <h3 className="section-title">Risk breaches</h3>
++          <p className="section-subtitle" style={{ marginTop: "5px", marginBottom: 0 }}>
++            Settled rounds where real winners were paid beyond what real losers funded, or that cost the house cash.
++          </p>
++        </div>
++        <div className="rotation-info-box">
++          <span className="rotation-italic-text">
++            Every figure comes from the round's own settlement record. <strong>Shortfall</strong> = real winners' profit paid beyond the net real loser pool (after commission) — money that came from the NPC simulator or the house.{" "}
++            <strong>House cash result</strong> = real money in − real money out; negative means the round cost the house cash. Rounds settled before the record existed are rebuilt from the database and marked <em>rebuilt</em>.
++          </span>
++        </div>
++      </div>
++
++      <div className="section-card">
++        <div className="battle-inspector-filters">
++          <div className="form-group battle-inspector-field battle-inspector-field--grow">
++            <label className="form-label" htmlFor="rb-battle-id">Battle ID (search)</label>
++            <input id="rb-battle-id" type="text" inputMode="numeric" className="form-input" placeholder="Enter battle id" value={battleIdSearch} onChange={(e) => setBattleIdSearch(e.target.value)} />
++          </div>
++          <div className="form-group battle-inspector-field">
++            <label className="form-label" htmlFor="rb-period">Period</label>
++            <select id="rb-period" className="form-select" value={period} onChange={(e) => setPeriod(e.target.value)} disabled={Boolean(battleIdSearch.trim())}>
++              {PERIOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
++            </select>
++          </div>
++          {period === "custom" && !battleIdSearch.trim() && (
++            <div className="form-group battle-inspector-field" style={{ minWidth: 260 }}>
++              <label className="form-label">Date Range</label>
++              <DateRangeDropdown onChange={(range) => setCustomRange(range)} />
++            </div>
++          )}
++          <div className="form-group battle-inspector-field">
++            <label className="form-label" htmlFor="rb-scope">Show</label>
++            <select id="rb-scope" className="form-select" value={scope} onChange={(e) => setScope(e.target.value)}>
++              {SCOPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
++            </select>
++          </div>
++        </div>
++        {battleIdSearch.trim() ? (
++          <p className="battle-id-search-hint" role="status" aria-live="polite">Battle ID search is active — the period filter is off. Clear the field to use it again.</p>
++        ) : null}
++        {appliedFilters && (
++          <p className="battle-inspector-applied-filters">
++            Server range: {appliedFilters.resolved_period}
++            {appliedFilters.applied_start && appliedFilters.applied_end ? ` · ${formatDateTime(appliedFilters.applied_start)} → ${formatDateTime(appliedFilters.applied_end)}` : ""}
++          </p>
++        )}
++      </div>
++
++      {riskBreachesError && <div className="battle-inspector-error" role="alert">{riskBreachesError}</div>}
++
++      {summary && (
++        <div className="section-card risk-breaches-summary-card">
++          <div className="section-header">
++            <h3 className="section-title">Summary</h3>
++            <p className="section-subtitle">Whole period (server-side), not just this page.</p>
++          </div>
++          <div className="risk-breaches-summary-grid">
++            {[
++              ["Breached rounds", summary.totalBreachedBattles],
++              ["Total shortfall", fmtMoney(summary.totalShortfall)],
++              ["Rounds that cost the house", summary.totalCompanyFundsBattles],
++              ["Total house cash lost", fmtMoney(summary.totalOutOfPocketPaid)],
++              ["House cash result (period)", fmtSigned(summary.totalHouseCashResult)],
++              ["Commission (period)", fmtMoney(summary.totalCommission)],
++              ["Real winners' profit paid", fmtMoney(summary.totalRealWinnerPayoutPaid)],
++              ["Largest single shortfall", fmtMoney(summary.largestSingleBreach)],
++              ["Latest breach at", formatDateTime(summary.latestBreachAt)],
++              ["Settled rounds (excl. ties)", summary.totalSettledBattles],
++              ["Breach rate", fmtPct(summary.breachRatePct)],
++              ["Rounds real users won", `${summary.totalNpcLossBattles} (${fmtPct(summary.npcLossRatePct)})`],
++              ["By model", `organic ${summary.byModel?.directive ?? 0} · legacy ${summary.byModel?.model_a ?? 0} · ties ${summary.byModel?.tie ?? 0}`],
++              ["Rebuilt (no stored record)", summary.recomputedCount],
++            ].map(([label, value]) => (
++              <div key={label} className="risk-breaches-summary-item">
++                <span className="risk-breaches-summary-label">{label}</span>
++                <span className="risk-breaches-summary-value risk-breaches-summary-value--wrap">{value == null ? "—" : String(value)}</span>
++              </div>
++            ))}
++          </div>
++          {(summary.truncated || summary.recomputeSkippedCount > 0) && (
++            <div className="rotation-info-box">
++              <span className="rotation-italic-text" style={{ color: "#f59e0b" }}>
++                {summary.truncated ? `Only the newest ${summary.candidateLimit} settled rounds of this period were considered — narrow the range for exact figures. ` : ""}
++                {summary.recomputeSkippedCount > 0 ? `${summary.recomputeSkippedCount} older rounds without a stored settlement record were not rebuilt in this request.` : ""}
++              </span>
++            </div>
++          )}
++        </div>
++      )}
++
++      <div className="section-card battle-inspector-table-card">
++        <div className="section-header">
++          <h3 className="section-title">Results</h3>
++          <p className="section-subtitle">
++            Page {pagination.page || page} of {pagination.totalPages || 1} · {pagination.limit ?? LIMIT} per page{pagination.total != null ? ` · ${pagination.total} rounds` : ""}
++          </p>
++        </div>
++        <div className="admin-table-wrapper battle-inspector-table-wrap">
++          <table className="admin-table battle-inspector-table">
++            <thead>
++              <tr>
++                <th>Battle ID</th><th>Settled</th><th>Model</th><th>Winner</th><th>Real losing</th><th>Commission</th><th>Winners' profit</th><th>Shortfall</th><th>House cash</th><th>Status</th><th>Action</th>
++              </tr>
++            </thead>
++            <tbody>
++              {riskBreachesLoading && !rows.length ? (
++                <tr><td colSpan={11} className="battle-inspector-empty">Loading…</td></tr>
++              ) : !rows.length ? (
++                <tr><td colSpan={11} className="battle-inspector-empty">No rounds match this query.</td></tr>
++              ) : (
++                rows.map((row) => (
++                  <tr key={row.battleId}>
++                    <td className="table-id" style={{ cursor: "pointer" }} onClick={() => setSelectedBattleId(row.battleId)}>{formatBattleId(row.battleId)}</td>
++                    <td>{formatDateTime(row.timestamp)}</td>
++                    <td>{MODEL_LABEL[row.model] || row.model}{row.valuationSource === "recomputed" ? <span title="Rebuilt from the rows" style={{ color: "#f59e0b", marginLeft: 4 }}>*</span> : null}</td>
++                    <td>{row.winnerSide}</td>
++                    <td>{fmtMoney(row.losingSideAmountUsed)}</td>
++                    <td>{fmtMoney(row.platformFee)}</td>
++                    <td>{fmtMoney(row.actualPayoutPaid)}</td>
++                    <td style={{ color: row.isBreach ? "#ff2d86" : undefined, fontWeight: row.isBreach ? 600 : 400 }}>{fmtMoney(row.breachAmount)}</td>
++                    <td><SignedCell value={row.houseCashResult} /></td>
++                    <td>
++                      <ResolutionBadge resolution={row.resolution} />
++                      {row.resolution?.notes ? <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>{row.resolution.notes}</div> : null}
++                    </td>
++                    <td>
++                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
++                        <button type="button" className="table-btn" onClick={() => setSelectedBattleId(row.battleId)}>Details</button>
++                        {renderResolutionControls(row.battleId, row.resolution)}
++                      </div>
++                    </td>
++                  </tr>
++                ))
++              )}
++            </tbody>
++          </table>
++        </div>
++        <Pagination currentPage={pagination.page || page} totalPages={pagination.totalPages || 1} totalItems={pagination.total ?? 0} perPage={pagination.limit ?? LIMIT} onPageChange={goPage} />
++      </div>
++    </div>
++  );
++};
++
++export default RiskBreaches;
+diff --git a/src/Pages/PriceMovementAudit/PriceReplayChart.jsx b/src/Pages/PriceMovementAudit/PriceReplayChart.jsx
+index 93241b3..3b26d55 100644
+--- a/src/Pages/PriceMovementAudit/PriceReplayChart.jsx
++++ b/src/Pages/PriceMovementAudit/PriceReplayChart.jsx
+@@ -52,7 +52,7 @@ export default function PriceReplayChart({ ticks, actualPath, startPrice }) {
+       </svg>
+       <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 12, color: '#a3a3a3' }}>
+         <span><span style={{ display: 'inline-block', width: 10, height: 2, background: '#00d6de', marginRight: 6 }} />Actual (recorded)</span>
+-        <span><span style={{ display: 'inline-block', width: 10, height: 2, background: '#f472b6', marginRight: 6 }} />Expected (engine replay)</span>
++        <span><span style={{ display: 'inline-block', width: 10, height: 2, background: '#f472b6', marginRight: 6 }} />Expected (formula for real trades, recorded moves for NPC trades)</span>
+       </div>
+     </div>
+   );
+diff --git a/src/Pages/PriceMovementAudit/index.jsx b/src/Pages/PriceMovementAudit/index.jsx
+index 07fa693..463a6a9 100644
+--- a/src/Pages/PriceMovementAudit/index.jsx
++++ b/src/Pages/PriceMovementAudit/index.jsx
+@@ -59,7 +59,7 @@ const PriceMovementAudit = () => {
+   const hasData = pagination.total > 0;
+ 
+   const period =
+-    dateRangeFilter === 'Today' ? 'today' : dateRangeFilter === 'This Week' ? 'week' : 'month';
++    dateRangeFilter === 'Today' ? 'today' : dateRangeFilter === 'This Week' ? 'week' : dateRangeFilter === 'All Time' ? 'all' : 'month';
+   const debouncedBattleId = searchId.trim();
+   // Pass / Fail is a server-side filter now, so the counts and the pages stay consistent.
+   const statusParam = statusFilter === 'Pass' ? 'pass' : statusFilter === 'Fail' ? 'fail' : 'all';
+@@ -117,7 +117,8 @@ const PriceMovementAudit = () => {
+         toast.success('Threshold updated.');
+         setViewState('dashboard');
+         setPage(1);
+-        dispatch(fetchPriceMovementAudit({ period, battle_id: debouncedBattleId, page: 1, limit: LIMIT }));
++        // Same filters as the list (status included) so the verdicts refresh under the new tolerance.
++        dispatch(fetchPriceMovementAudit({ period, battle_id: debouncedBattleId, status: statusParam, page: 1, limit: LIMIT }));
+       })
+       .catch((err) => toast.error(typeof err === 'string' ? err : 'Failed to update threshold.'));
+   };
+@@ -125,7 +126,8 @@ const PriceMovementAudit = () => {
+   const handleExportCsv = async () => {
+     setExporting(true);
+     try {
+-      const params = { limit: LIMIT };
++      const params = {};
++      if (statusParam !== 'all') params.status = statusParam;
+       if (debouncedBattleId) {
+         params.battle_id = debouncedBattleId;
+       } else {
+@@ -150,7 +152,8 @@ const PriceMovementAudit = () => {
+   const auditedTotal = summary?.total ?? pagination.total;
+   const failedRounds = summary?.flagged ?? rows.filter((r) => r.is_flagged).length;
+   const passRate = summary?.pass_rate_pct ?? null;
+-  const avgVariance = summary?.avg_abs_variance_pct ?? summary?.avg_swing_pct ?? null;
++  const avgVariance = summary?.avg_abs_variance_pct ?? null;
++  const avgSwing = summary?.avg_swing_pct ?? null;
+ 
+   if (viewState === 'settings') {
+     return (
+@@ -174,10 +177,10 @@ const PriceMovementAudit = () => {
+             <div className="pma-form-group">
+               <label className="pma-form-label">Global Variance Tolerance</label>
+               <div className="pma-global-input-wrapper">
+-                <input type="text" value={thresholdDraft} onChange={(e) => setThresholdDraft(e.target.value)} />
++                <input type="number" min="0.01" max="100" step="0.01" inputMode="decimal" value={thresholdDraft} onChange={(e) => setThresholdDraft(e.target.value)} />
+                 <span className="pct">%</span>
+               </div>
+-              <div className="pma-form-sublabel">Rounds with variance above this threshold are flagged as Fail.</div>
++              <div className="pma-form-sublabel">A round fails when |actual end price − expected end price| ÷ start price reaches this percentage. Rounds settled before the expected price was stored fall back to the intra-round swing check and say so.</div>
+               <div className="pma-form-sublabel" style={{ marginTop: 4 }}>
+                 This is a global setting — every trading pair currently uses the same threshold, and every
+                 battle (past and future) is checked against whatever threshold is active right now.
+@@ -212,7 +215,7 @@ const PriceMovementAudit = () => {
+       <div className="section-card" style={{ marginBottom: '25px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+         <div className="section-header" style={{ marginBottom: 0 }}>
+           <h3 className="section-title">Price Movement Accuracy Audit Tool</h3>
+-          <p className="section-subtitle">Compares calculated expected movement against actual chart movement for every settled round.</p>
++          <p className="section-subtitle">For every settled round: the end price the pricing formula should have produced (stored at settlement) against the end price the chart actually showed.</p>
+         </div>
+         <div className="pma-actions">
+           <PermissionGate permission="priceAudit.edit">
+@@ -245,6 +248,7 @@ const PriceMovementAudit = () => {
+               <option>This Month</option>
+               <option>Today</option>
+               <option>This Week</option>
++              <option>All Time</option>
+             </select>
+           </div>
+           <div className="form-group battle-inspector-field">
+@@ -263,8 +267,8 @@ const PriceMovementAudit = () => {
+         <div className="rotation-info-box">
+           <span className="rotation-italic-text">
+             <strong>Round ID Search:</strong> jump straight to one battle by its ID. <strong>Date Range:</strong>{' '}
+-            only show battles from a certain period. <strong>Audit Status:</strong> show only battles that
+-            Passed (normal price swing) or Failed (unusually large swing, flagged for review).
++            only show battles settled in a certain period (UTC days). <strong>Audit Status:</strong> show only battles that
++            Passed (the chart ended within tolerance of the formula's expected end price) or Failed (outside tolerance, flagged for review).
+           </span>
+         </div>
+       </div>
+@@ -316,13 +320,13 @@ const PriceMovementAudit = () => {
+           <div className="pma-metric-bg-icon">⚠️</div>
+         </div>
+         <div className="pma-metric-card">
+-          <div className="pma-metric-title">Avg Variance</div>
++          <div className="pma-metric-title">{avgVariance != null ? 'Avg |Variance|' : 'Avg Swing'}</div>
+           <div className={`pma-metric-value ${hasData ? 'active' : ''}`}>
+-            {hasData && avgVariance != null ? `${Number(avgVariance).toFixed(2)}%` : '—'}
++            {hasData && avgVariance != null ? `${Number(avgVariance).toFixed(2)}%` : hasData && avgSwing != null ? `${Number(avgSwing).toFixed(2)}%` : '—'}
+           </div>
+           {hasData && (
+             <div className="pma-metric-sub">
+-              <span>{summary?.avg_abs_variance_pct != null ? 'Avg |expected − actual| (this period)' : 'Avg intra-round swing (this period)'}</span>
++              <span>{avgVariance != null ? `Avg |actual − expected| over ${summary?.with_stored_snapshot ?? 0} rounds with a stored verdict` : 'Avg intra-round swing (no stored verdicts in this period)'}</span>
+             </div>
+           )}
+           <div className="pma-metric-bg-icon">📈</div>
+@@ -331,9 +335,11 @@ const PriceMovementAudit = () => {
+ 
+       <div className="rotation-info-box">
+         <span className="rotation-italic-text">
+-          <strong>Total Rounds Audited / Pass Rate / Failed Rounds:</strong> how many of the matching battles
+-          passed vs. failed the swing check below. <strong>Avg Variance:</strong> the average size of the price
+-          swing across these battles — higher means more volatile rounds, not necessarily manipulation.
++          <strong>Total Rounds Audited / Pass Rate / Failed Rounds:</strong> how many settled rounds in this period
++          ended within tolerance of the formula's expected end price. <strong>Avg |Variance|:</strong> the average distance between
++          the actual and the expected end price, as a percentage of the start price.
++          {summary?.without_stored_snapshot > 0 ? ` ${summary.without_stored_snapshot} round(s) predate the stored verdict and were checked on intra-round swing instead (marked “swing”).` : ''}
++          {summary?.truncated ? ` Only the newest ${summary.row_limit} rounds were considered — narrow the period for exact figures.` : ''}
+         </span>
+       </div>
+ 
+@@ -352,8 +358,8 @@ const PriceMovementAudit = () => {
+                   <th>NET VOL</th>
+                   <th>PIP SENS.</th>
+                   <th>MULTIPLIER</th>
+-                  <th>EXPECTED MOVEMENT</th>
+-                  <th>ACTUAL SWING %</th>
++                  <th>EXPECTED END PRICE</th>
++                  <th>INTRA-ROUND SWING %</th>
+                   <th>VARIANCE %</th>
+                   <th>STATUS</th>
+                   <th>ACTIONS</th>
+@@ -403,9 +409,11 @@ const PriceMovementAudit = () => {
+                       <td>{fmtPct(row.swing_pct)}</td>
+                       <td className={row.is_flagged ? 'pma-val-pink' : 'pma-val-cyan'}>{fmtPct(row.price_variance_pct)}</td>
+                       <td>
+-                        <span className={row.is_flagged ? 'pma-status-fail' : 'pma-status-pass'}>
++                        <span className={row.is_flagged ? 'pma-status-fail' : 'pma-status-pass'} title={row.flag_reason === 'swing' ? 'No stored verdict for this round: flagged on intra-round swing' : row.flag_reason === 'variance' ? 'Actual end price outside tolerance of the expected end price' : undefined}>
+                           {row.is_flagged ? 'FAIL' : 'PASS'}
+                         </span>
++                        {row.flag_reason === 'swing' && <span style={{ color: '#f59e0b', marginLeft: 4, fontSize: 11 }}>swing</span>}
++                        {!row.has_stored_snapshot && !row.is_flagged && <span title="No stored verdict (settled before the snapshot existed); checked on intra-round swing" style={{ color: '#888', marginLeft: 4, fontSize: 11 }}>swing</span>}
+                       </td>
+                       <td
+                         style={{ cursor: 'pointer', color: '#00d6de', fontWeight: 'bold', fontSize: 16 }}
+@@ -518,17 +526,28 @@ const PriceMovementAudit = () => {
+               <div className="kyc-detail-item">
+                 <span className="kyc-detail-label">Audit Status</span>
+                 <span className={selectedAudit.is_flagged ? 'pma-status-fail' : 'pma-status-pass'}>
+-                  {selectedAudit.is_flagged ? 'FAIL' : 'PASS'}
++                  {selectedAudit.is_flagged ? 'FAIL' : 'PASS'}{selectedAudit.flag_reason ? ` (${selectedAudit.flag_reason})` : ''}
+                 </span>
+               </div>
++              <div className="kyc-detail-item">
++                <span className="kyc-detail-label">Freeze Seconds Used</span>
++                <span className="kyc-detail-value">{selectedAudit.freeze_seconds_used ?? '—'}</span>
++              </div>
++              <div className="kyc-detail-item">
++                <span className="kyc-detail-label">Config Source</span>
++                <span className="kyc-detail-value">{selectedAudit.config_source ?? '—'}</span>
++              </div>
+             </div>
+ 
+             <div style={{ marginTop: 20, paddingTop: 15, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+               <span className="kyc-detail-label" style={{ display: 'block', marginBottom: 10 }}>
+                 Expected Movement
+                 {priceMovementAuditReplay?.is_stored_snapshot
+-                  ? ' (calculated once at settlement, stored — this chart replays the same stored config for display)'
+-                  : ' (this battle predates stored snapshots — reconstructed from historical config, may be approximate)'}
++                  ? ' (verdict stored at settlement; the chart replays the same stored config)'
++                  : ' (this battle predates stored verdicts — reconstructed from the config history, may be approximate)'}
++                {priceMovementAuditReplay?.replay_method === 'formula_real_plus_actual_npc'
++                  ? ` · real trades: formula; NPC trades: recorded moves (${priceMovementAuditReplay.npc_ticks_matched} matched${priceMovementAuditReplay.npc_ticks_missing ? `, ${priceMovementAuditReplay.npc_ticks_missing} re-run` : ''})`
++                  : ''}
+               </span>
+               {priceMovementAuditReplayLoading ? (
+                 <div style={{ color: '#888', fontSize: 13 }}>Replaying battle trades…</div>
+@@ -554,7 +573,11 @@ const PriceMovementAudit = () => {
+                   </div>
+                   <div className="kyc-detail-item">
+                     <span className="kyc-detail-label">Trades Replayed</span>
+-                    <span className="kyc-detail-value">{priceMovementAuditReplay.trade_count}</span>
++                    <span className="kyc-detail-value">{priceMovementAuditReplay.trade_count} ({priceMovementAuditReplay.real_trade_count} real / {priceMovementAuditReplay.npc_trade_count} NPC)</span>
++                  </div>
++                  <div className="kyc-detail-item">
++                    <span className="kyc-detail-label">Freeze Seconds Used</span>
++                    <span className="kyc-detail-value">{priceMovementAuditReplay.freeze_seconds_used ?? '—'}</span>
+                   </div>
+                   <div className="kyc-detail-item">
+                     <span className="kyc-detail-label">Replay Status</span>
+diff --git a/src/Pages/RiskManagementTerminal/index.jsx b/src/Pages/RiskManagementTerminal/index.jsx
+index d5769ec..11c81df 100644
+--- a/src/Pages/RiskManagementTerminal/index.jsx
++++ b/src/Pages/RiskManagementTerminal/index.jsx
+@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
+ import './styles.css';
+ import {
+   fetchRiskTerminalLiveState,
++  fetchRiskTerminalAlerts,
+   injectLiquidity,
+   fetchRiskBreachResolutions,
+   setRiskBreachResolution,
+@@ -18,17 +19,28 @@ function fmtMoney(value) {
+   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+ }
+ 
++function fmtSigned(value) {
++  const n = Number(value);
++  if (!Number.isFinite(n)) return '—';
++  const s = fmtMoney(Math.abs(n));
++  return n < 0 ? `−${s}` : n > 0 ? `+${s}` : s;
++}
++
++const MODEL_LABEL = { directive: 'Organic (directive)', model_a: 'Legacy (Model A)' };
++
+ /**
+- * company_net_position (the platform fee) can never go negative under real
+- * settlement math — a thin-margin round instead shows up as the payout
+- * consuming almost the entire distributable pool. 90%+ is the risk-alert
+- * threshold: the house is paying out nearly everything it collected from
+- * losers as winner profit, leaving little retained.
++ * A scenario is a breach when real winners would be paid beyond the net real loser pool
++ * (`shortfall` > 0) — that money comes from the NPC simulator or the house — or when real money
++ * out would exceed real money in (`house_cash_result` < 0). The old "Thin Margin" badge compared
++ * the payout to the pool it was paid from, which is always ≤ 1 by construction and never fired
++ * for the rounds that matter.
+  */
+-const PAYOUT_RATIO_BREACH_THRESHOLD = 0.9;
+-
+-function isScenarioAtRisk(scenario) {
+-  return Number(scenario?.payout_to_pool_ratio) >= PAYOUT_RATIO_BREACH_THRESHOLD;
++function scenarioRisk(scenario) {
++  const shortfall = Number(scenario?.shortfall);
++  const cash = Number(scenario?.house_cash_result ?? scenario?.company_net_position);
++  if (Number.isFinite(cash) && cash < -0.005) return { level: 'loss', label: 'House pays' };
++  if (Number.isFinite(shortfall) && shortfall > 0.005) return { level: 'shortfall', label: 'Beyond real pool' };
++  return null;
+ }
+ 
+ const RiskManagementTerminal = () => {
+@@ -63,9 +75,12 @@ const RiskManagementTerminal = () => {
+     return restBattle;
+   }, [liveTick, restBattle, socketConnected]);
+ 
++  const { riskTerminalAlerts, riskTerminalAlertsLoading } = useSelector((state) => state.admin);
++
+   const refresh = () => {
+     dispatch(fetchRiskTerminalLiveState());
+     dispatch(fetchRiskBreachResolutions({ limit: 20 }));
++    dispatch(fetchRiskTerminalAlerts({ limit: 50 }));
+   };
+ 
+   useEffect(() => {
+@@ -77,6 +92,16 @@ const RiskManagementTerminal = () => {
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [dispatch]);
+ 
++  // A new round: the socket tick names a battle REST has not caught up with yet. Refetch at
++  // once instead of showing the old round for up to 15 s.
++  const tickBattleId = liveTick?.battle_id;
++  const restBattleId = riskTerminalLiveState?.active_battle?.battle_id;
++  useEffect(() => {
++    if (tickBattleId != null && restBattleId != null && tickBattleId !== restBattleId) {
++      dispatch(fetchRiskTerminalLiveState());
++    }
++  }, [dispatch, tickBattleId, restBattleId]);
++
+   const handleInject = () => {
+     if (!activeBattle) {
+       toast.error('No active battle to inject liquidity into.');
+@@ -155,10 +180,11 @@ const RiskManagementTerminal = () => {
+         <div className="rotation-info-box">
+           <span className="rotation-italic-text">
+             <strong>Pots:</strong> how much real players vs. simulated bots ("NPC") have staked on each side of
+-            the current battle right now. <strong>If Buy/Sell Wins:</strong> what the platform would owe and
+-            keep if that side won this instant — recalculated live as the battle progresses, not a prediction.
+-            <strong> Thin Margin</strong> flags a scenario where the payout owed would eat up almost the entire
+-            distributable pool, leaving little for the house.
++            the current battle right now. <strong>If Buy/Sell Wins:</strong> what settlement would do if that side won this
++            instant, computed with the model that will actually settle the round ({activeBattle?.model ? MODEL_LABEL[activeBattle.model] || activeBattle.model : 'organic or legacy'}).
++            <strong> Payout owed</strong> = real winners' stakes back plus their profit. <strong>House cash result</strong> = real money in − real money out;
++            negative means the round would cost the house cash. <strong>Shortfall</strong> = real winners' profit beyond the net real loser pool (paid from NPC / house money).
++            <strong> Beyond real pool</strong> / <strong>House pays</strong> badges mark the scenarios that need attention.
+           </span>
+         </div>
+       </div>
+@@ -175,6 +201,14 @@ const RiskManagementTerminal = () => {
+         </div>
+       ) : (
+         <div className="section-card rmt-card">
++          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 12, fontSize: 12, color: '#a3a3a3' }}>
++            <span>Settlement model: <strong style={{ color: '#fff' }}>{MODEL_LABEL[activeBattle.model] || activeBattle.model || '—'}</strong></span>
++            {activeBattle.current && (
++              <span>Leading now: <strong style={{ color: activeBattle.current.winner === 'BUY' ? '#00d6de' : activeBattle.current.winner === 'SELL' ? '#ff2d86' : '#fff' }}>{activeBattle.current.winner}</strong> ({activeBattle.current.reason})</span>
++            )}
++            {activeBattle.current_price != null && <span>Price: <strong style={{ color: '#fff' }}>{Number(activeBattle.current_price).toFixed(5)}</strong></span>}
++            {activeBattle.source && <span>Source: {activeBattle.source === 'engine_tick' ? 'engine tick' : activeBattle.source === 'api_compute' ? 'API (engine tick unavailable)' : 'live socket'}</span>}
++          </div>
+           <div className="rmt-pots-row">
+             <div className="rmt-pot-col">
+               <span className="rmt-pot-label">REAL BUY POT <span className="rmt-dot cyan"></span></span>
+@@ -217,14 +251,14 @@ const RiskManagementTerminal = () => {
+           </div>
+ 
+           <div className="rmt-scenarios">
+-            <div className={`rmt-scenario-card cyan-border${isScenarioAtRisk(activeBattle.if_buy_wins) ? ' rmt-scenario-card--breach' : ''}`}>
++            <div className={`rmt-scenario-card cyan-border${scenarioRisk(activeBattle.if_buy_wins) ? ' rmt-scenario-card--breach' : ''}`}>
+               <div className="rmt-scenario-header">
+                 <div>
+                   <h4>
+                     IF BUY WINS
+-                    {isScenarioAtRisk(activeBattle.if_buy_wins) && (
+-                      <span className="rmt-breach-badge" title="Payout owed is consuming nearly the entire distributable pool">
+-                        ⚠ Thin Margin
++                    {scenarioRisk(activeBattle.if_buy_wins) && (
++                      <span className="rmt-breach-badge" title={scenarioRisk(activeBattle.if_buy_wins).level === 'loss' ? 'Real money out would exceed real money in' : 'Real winners would be paid beyond the net real loser pool'}>
++                        ⚠ {scenarioRisk(activeBattle.if_buy_wins).label}
+                       </span>
+                     )}
+                   </h4>
+@@ -237,15 +271,29 @@ const RiskManagementTerminal = () => {
+                 <span className="rmt-row-value">{fmtMoney(activeBattle.if_buy_wins.payout_owed)}</span>
+               </div>
+               <div className="rmt-scenario-row">
+-                <span className="rmt-row-label">Company Net Position</span>
++                <span className="rmt-row-label">House Cash Result</span>
+                 <span className={`rmt-row-value ${activeBattle.if_buy_wins.company_net_position >= 0 ? 'cyan-text' : 'pink-text'}`}>
+-                  {activeBattle.if_buy_wins.company_net_position >= 0 ? '+' : ''}{fmtMoney(activeBattle.if_buy_wins.company_net_position)}
++                  {fmtSigned(activeBattle.if_buy_wins.company_net_position)}
+                 </span>
+               </div>
++              <div className="rmt-scenario-row">
++                <span className="rmt-row-label">Commission</span>
++                <span className="rmt-row-value">{fmtMoney(activeBattle.if_buy_wins.platform_fee)}</span>
++              </div>
++              <div className="rmt-scenario-row">
++                <span className="rmt-row-label">Shortfall (beyond real pool)</span>
++                <span className={`rmt-row-value ${Number(activeBattle.if_buy_wins.shortfall) > 0.005 ? 'pink-text' : ''}`}>{fmtMoney(activeBattle.if_buy_wins.shortfall)}</span>
++              </div>
+               <div className="rmt-scenario-row">
+                 <span className="rmt-row-label">Real Winner Volume</span>
+                 <span className="rmt-row-value">{fmtMoney(activeBattle.if_buy_wins.real_winner_volume)}</span>
+               </div>
++              {activeBattle.if_buy_wins.sim_profit != null && (
++                <div className="rmt-scenario-row">
++                  <span className="rmt-row-label">NPC profit (after cap) / surplus to real</span>
++                  <span className="rmt-row-value">{fmtMoney(activeBattle.if_buy_wins.sim_profit)} / {fmtMoney(activeBattle.if_buy_wins.surplus_to_real)}</span>
++                </div>
++              )}
+               <div className="rmt-scenario-row rmt-scenario-footer">
+                 <span className="rmt-row-label">Distributable Pool</span>
+                 <div className="rmt-footer-right">
+@@ -254,14 +302,14 @@ const RiskManagementTerminal = () => {
+               </div>
+             </div>
+ 
+-            <div className={`rmt-scenario-card pink-border${isScenarioAtRisk(activeBattle.if_sell_wins) ? ' rmt-scenario-card--breach' : ''}`}>
++            <div className={`rmt-scenario-card pink-border${scenarioRisk(activeBattle.if_sell_wins) ? ' rmt-scenario-card--breach' : ''}`}>
+               <div className="rmt-scenario-header">
+                 <div>
+                   <h4>
+                     IF SELL WINS
+-                    {isScenarioAtRisk(activeBattle.if_sell_wins) && (
+-                      <span className="rmt-breach-badge" title="Payout owed is consuming nearly the entire distributable pool">
+-                        ⚠ Thin Margin
++                    {scenarioRisk(activeBattle.if_sell_wins) && (
++                      <span className="rmt-breach-badge" title={scenarioRisk(activeBattle.if_sell_wins).level === 'loss' ? 'Real money out would exceed real money in' : 'Real winners would be paid beyond the net real loser pool'}>
++                        ⚠ {scenarioRisk(activeBattle.if_sell_wins).label}
+                       </span>
+                     )}
+                   </h4>
+@@ -274,15 +322,29 @@ const RiskManagementTerminal = () => {
+                 <span className="rmt-row-value">{fmtMoney(activeBattle.if_sell_wins.payout_owed)}</span>
+               </div>
+               <div className="rmt-scenario-row">
+-                <span className="rmt-row-label">Company Net Position</span>
++                <span className="rmt-row-label">House Cash Result</span>
+                 <span className={`rmt-row-value ${activeBattle.if_sell_wins.company_net_position >= 0 ? 'cyan-text' : 'pink-text'}`}>
+-                  {activeBattle.if_sell_wins.company_net_position >= 0 ? '+' : ''}{fmtMoney(activeBattle.if_sell_wins.company_net_position)}
++                  {fmtSigned(activeBattle.if_sell_wins.company_net_position)}
+                 </span>
+               </div>
++              <div className="rmt-scenario-row">
++                <span className="rmt-row-label">Commission</span>
++                <span className="rmt-row-value">{fmtMoney(activeBattle.if_sell_wins.platform_fee)}</span>
++              </div>
++              <div className="rmt-scenario-row">
++                <span className="rmt-row-label">Shortfall (beyond real pool)</span>
++                <span className={`rmt-row-value ${Number(activeBattle.if_sell_wins.shortfall) > 0.005 ? 'pink-text' : ''}`}>{fmtMoney(activeBattle.if_sell_wins.shortfall)}</span>
++              </div>
+               <div className="rmt-scenario-row">
+                 <span className="rmt-row-label">Real Winner Volume</span>
+                 <span className="rmt-row-value">{fmtMoney(activeBattle.if_sell_wins.real_winner_volume)}</span>
+               </div>
++              {activeBattle.if_sell_wins.sim_profit != null && (
++                <div className="rmt-scenario-row">
++                  <span className="rmt-row-label">NPC profit (after cap) / surplus to real</span>
++                  <span className="rmt-row-value">{fmtMoney(activeBattle.if_sell_wins.sim_profit)} / {fmtMoney(activeBattle.if_sell_wins.surplus_to_real)}</span>
++                </div>
++              )}
+               <div className="rmt-scenario-row rmt-scenario-footer">
+                 <span className="rmt-row-label">Distributable Pool</span>
+                 <div className="rmt-footer-right">
+@@ -299,8 +361,9 @@ const RiskManagementTerminal = () => {
+         <div className="section-header" style={{ marginBottom: '20px' }}>
+           <h3 className="section-title">Manual Liquidity Injection</h3>
+           <p className="section-subtitle">
+-            Places a real order via a dedicated house account against the active battle — moves the pot
+-            immediately. Capped at 100,000 per call.
++            Places a real order via the dedicated house account against the active battle — moves the pot
++            immediately. Capped at 100,000 per call. The organic engine's settlement excludes it from "real" money;
++            the legacy model values it like any other pool money.
+           </p>
+         </div>
+ 
+@@ -367,6 +430,48 @@ const RiskManagementTerminal = () => {
+         </div>
+       </div>
+ 
++      {/* Trading-integrity alerts */}
++      <div className="section-card rmt-card">
++        <div className="section-header" style={{ marginBottom: '20px' }}>
++          <h3 className="section-title">Trading Integrity Alerts</h3>
++          <p className="section-subtitle">Written by the detection scanner (impossible PnL, circular gifts, multi-accounting). Unexpired, newest first.</p>
++        </div>
++        <div className="admin-table-wrapper">
++          <table className="admin-table">
++            <thead>
++              <tr>
++                <th>DETECTED</th>
++                <th>KIND</th>
++                <th>SEVERITY</th>
++                <th>CONFIDENCE</th>
++                <th>USER</th>
++                <th>BATTLE</th>
++                <th>EVIDENCE</th>
++              </tr>
++            </thead>
++            <tbody>
++              {riskTerminalAlertsLoading && !riskTerminalAlerts.length ? (
++                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 24 }}>Loading…</td></tr>
++              ) : !riskTerminalAlerts.length ? (
++                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 24 }}>No open alerts.</td></tr>
++              ) : (
++                riskTerminalAlerts.map((a) => (
++                  <tr key={a.id}>
++                    <td>{a.detected_at ? new Date(a.detected_at).toLocaleString() : '—'}</td>
++                    <td>{a.kind}</td>
++                    <td><span className={a.severity === 'HIGH' ? 'pma-status-fail' : a.severity === 'MEDIUM' ? 'status-badge warning' : 'pma-status-pass'}>{a.severity}</span></td>
++                    <td>{Number.isFinite(Number(a.confidence)) ? `${Math.round(Number(a.confidence) * 100)}%` : '—'}</td>
++                    <td><span className="table-id">{a.user?.id}</span> {a.user?.name || a.user?.email || '—'}</td>
++                    <td className="table-id">{a.related_battle_id ?? '—'}</td>
++                    <td style={{ fontSize: 11, color: '#888', maxWidth: 320, overflowWrap: 'anywhere' }}>{a.evidence ? JSON.stringify(a.evidence) : '—'}</td>
++                  </tr>
++                ))
++              )}
++            </tbody>
++          </table>
++        </div>
++      </div>
++
+       {/* Risk Breach Resolutions */}
+       <div className="section-card rmt-card">
+         <div className="section-header" style={{ marginBottom: '20px' }}>
+diff --git a/src/store/slices/adminSlice.js b/src/store/slices/adminSlice.js
+index 588c105..9c65d55 100644
+--- a/src/store/slices/adminSlice.js
++++ b/src/store/slices/adminSlice.js
+@@ -2961,7 +2961,10 @@ export const fetchBattleInspector = createAsyncThunk(
+       period = "today",
+       start_date,
+       end_date,
++      start_at,
++      end_at,
+       battle_id,
++      status,
+       page = 1,
+       limit = 10,
+     } = {},
+@@ -2969,6 +2972,8 @@ export const fetchBattleInspector = createAsyncThunk(
+   ) => {
+     try {
+       const params = { page, limit };
++      // Status is a server-side filter; it used to be dropped here so the dropdown did nothing.
++      if (status && status !== "all") params.status = status;
+ 
+       const idRaw =
+         battle_id === null || battle_id === undefined
+@@ -2983,8 +2988,13 @@ export const fetchBattleInspector = createAsyncThunk(
+       } else {
+         params.period = period || "today";
+         if (params.period === "custom") {
+-          if (start_date) params.start_date = start_date;
+-          if (end_date) params.end_date = end_date;
++          if (start_at && end_at) {
++            params.start_at = start_at;
++            params.end_at = end_at;
++          } else {
++            if (start_date) params.start_date = start_date;
++            if (end_date) params.end_date = end_date;
++          }
+         }
+       }
+ 
+@@ -3128,7 +3138,7 @@ export const fetchBattleInspectorDetail = createAsyncThunk(
+ 
+ export const fetchPriceMovementAudit = createAsyncThunk(
+   "admin/fetchPriceMovementAudit",
+-  async ({ period = "month", start_date, end_date, battle_id, page = 1, limit = 10, status } = {}, { rejectWithValue }) => {
++  async ({ period = "month", start_date, end_date, start_at, end_at, battle_id, page = 1, limit = 10, status } = {}, { rejectWithValue }) => {
+     try {
+       const params = { page, limit };
+       if (status && status !== "all") params.status = status;
+@@ -3137,8 +3147,13 @@ export const fetchPriceMovementAudit = createAsyncThunk(
+       } else {
+         params.period = period;
+         if (period === "custom") {
+-          if (start_date) params.start_date = start_date;
+-          if (end_date) params.end_date = end_date;
++          if (start_at && end_at) {
++            params.start_at = start_at;
++            params.end_at = end_at;
++          } else {
++            if (start_date) params.start_date = start_date;
++            if (end_date) params.end_date = end_date;
++          }
+         }
+       }
+       const response = await axiosInstance.get("/admin/price-movement-audit", {
+@@ -3286,7 +3301,10 @@ export const fetchRiskBreaches = createAsyncThunk(
+       period = "today",
+       start_date,
+       end_date,
++      start_at,
++      end_at,
+       battle_id,
++      scope,
+       page = 1,
+       limit = 10,
+     } = {},
+@@ -3294,6 +3312,7 @@ export const fetchRiskBreaches = createAsyncThunk(
+   ) => {
+     try {
+       const params = { page, limit };
++      if (scope && scope !== "all") params.scope = scope;
+ 
+       const idRaw =
+         battle_id === null || battle_id === undefined
+@@ -3308,8 +3327,15 @@ export const fetchRiskBreaches = createAsyncThunk(
+       } else {
+         params.period = period || "today";
+         if (params.period === "custom") {
+-          if (start_date) params.start_date = start_date;
+-          if (end_date) params.end_date = end_date;
++          // Exact instants (the browser's own local day boundaries) beat date strings, which
++          // the server would read as UTC days.
++          if (start_at && end_at) {
++            params.start_at = start_at;
++            params.end_at = end_at;
++          } else {
++            if (start_date) params.start_date = start_date;
++            if (end_date) params.end_date = end_date;
++          }
+         }
+       }
+ 
+@@ -3332,6 +3358,45 @@ export const fetchRiskBreaches = createAsyncThunk(
+   },
+ );
+ 
++export const fetchRiskBreachDetail = createAsyncThunk(
++  "admin/fetchRiskBreachDetail",
++  async (battleId, { rejectWithValue }) => {
++    try {
++      const response = await axiosInstance.get(`/admin/risk-breaches/${battleId}`, {
++        headers: { "Content-Type": "application/json", Authorization: gettoken() },
++      });
++      return response.data;
++    } catch (error) {
++      const message =
++        error.response?.data?.error ||
++        error.response?.data?.message ||
++        error.message ||
++        "Failed to fetch risk breach detail";
++      return rejectWithValue(message);
++    }
++  },
++);
++
++export const fetchRiskTerminalAlerts = createAsyncThunk(
++  "admin/fetchRiskTerminalAlerts",
++  async ({ limit = 50, include_expired = false } = {}, { rejectWithValue }) => {
++    try {
++      const response = await axiosInstance.get("/admin/risk-terminal/alerts", {
++        params: { limit, include_expired },
++        headers: { "Content-Type": "application/json", Authorization: gettoken() },
++      });
++      return response.data;
++    } catch (error) {
++      const message =
++        error.response?.data?.error ||
++        error.response?.data?.message ||
++        error.message ||
++        "Failed to fetch risk terminal alerts";
++      return rejectWithValue(message);
++    }
++  },
++);
++
+ export const fetchCapitalFlowOverview = createAsyncThunk(
+   "admin/fetchCapitalFlowOverview",
+   async (
+@@ -3486,11 +3551,10 @@ export const fetchDeepHistory = createAsyncThunk(
+   ) => {
+     try {
+       const lim = Math.min(Math.max(1, Number(limit) || 50), 200);
+-      const params = {
+-        page,
+-        limit: lim,
+-        period: period || "today",
+-      };
++      const params = { page, limit: lim };
++      // A battle-id search means "every stake of that battle": no period window at all.
++      const battleIdGiven = battle_id != null && String(battle_id).trim() !== "";
++      if (!battleIdGiven) params.period = period || "today";
+ 
+       const parseOptionalId = (v, label) => {
+         if (v == null || v === "") return null;
+@@ -4408,6 +4472,12 @@ const initialState = {
+   riskBreaches: null,
+   riskBreachesLoading: false,
+   riskBreachesError: null,
++  riskBreachDetail: null,
++  riskBreachDetailLoading: false,
++  riskBreachDetailError: null,
++  riskTerminalAlerts: [],
++  riskTerminalAlertsLoading: false,
++  riskTerminalAlertsError: null,
+   capitalFlowOverview: null,
+   capitalFlowOverviewLoading: false,
+   capitalFlowOverviewError: null,
+@@ -5487,10 +5557,35 @@ const adminSlice = createSlice({
+         state.priceMovementAuditReplay = null;
+       })
+ 
++      .addCase(fetchRiskBreachDetail.pending, (state) => {
++        state.riskBreachDetailLoading = true;
++        state.riskBreachDetailError = null;
++        state.riskBreachDetail = null;
++      })
++      .addCase(fetchRiskBreachDetail.fulfilled, (state, action) => {
++        state.riskBreachDetailLoading = false;
++        state.riskBreachDetail = action.payload?.data || null;
++      })
++      .addCase(fetchRiskBreachDetail.rejected, (state, action) => {
++        state.riskBreachDetailLoading = false;
++        state.riskBreachDetailError = action.payload;
++      })
++      .addCase(fetchRiskTerminalAlerts.pending, (state) => {
++        state.riskTerminalAlertsLoading = true;
++        state.riskTerminalAlertsError = null;
++      })
++      .addCase(fetchRiskTerminalAlerts.fulfilled, (state, action) => {
++        state.riskTerminalAlertsLoading = false;
++        state.riskTerminalAlerts = action.payload?.data || [];
++      })
++      .addCase(fetchRiskTerminalAlerts.rejected, (state, action) => {
++        state.riskTerminalAlertsLoading = false;
++        state.riskTerminalAlertsError = action.payload;
++      })
++
+       .addCase(fetchRiskBreaches.pending, (state) => {
+         state.riskBreachesLoading = true;
+         state.riskBreachesError = null;
+-        state.riskBreaches = null;
+       })
+       .addCase(fetchRiskBreaches.fulfilled, (state, action) => {
+         state.riskBreachesLoading = false;
+diff --git a/vite.config.js b/vite.config.js
+index d8c23a4..e0b9652 100644
+--- a/vite.config.js
++++ b/vite.config.js
+@@ -15,6 +15,9 @@ export default defineConfig({
+       ],
+       workbox: {
+         globPatterns: ['**/*.{js,css,html,ico}'],
++        // The main bundle passed the 2 MiB workbox default; keep it precached rather than
++        // silently dropping it from the service worker (which fails the build).
++        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+         runtimeCaching: [
+           {
+             urlPattern: /^https:\/\/api\./i,
+-- 
+2.43.0
+

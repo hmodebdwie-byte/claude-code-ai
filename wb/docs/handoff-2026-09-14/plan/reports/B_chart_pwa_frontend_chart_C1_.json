@@ -1,0 +1,151 @@
+{
+ "area": "B. chart-pwa (frontend chart: C1 client side, chart-motion F1–F8, ROUND ENTRY autoscale, histogram scale, RAF/perf)",
+ "files_changed": [
+  {
+   "path": "/home/claude/wb/frontend/src/stores/lineChartStore.js",
+   "summary": "Rewritten as ONE continuous wall-clock series: dedupe key = bucket second only, cap 900 (LINE_CHART_MAX_CANDLES), replaceCandles (candleBatch replace), appendClosedCandle (candleClosed, exact server close wins), upsertInProgress (priceUpdate: value + running bucket volume, never history), maxVolume over the whole series, batchGeneration + revision counters, resetLineChart is a no-op at round boundaries, clearLineChart for hard teardown; compatibility aliases kept; no import of core/constants so node --test can load it."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/components/NewChart.jsx",
+   "summary": "Rewrite of data/motion logic (styling, class names, entry-line/expiry-tag markup kept): setData only on batch replace / visibility resume, update otherwise; no reset at battleEnd/newBattleStarted; fixed viewport (barSpacing = plotWidth/80, rightOffset 18) applied on create+resize, no setVisibleRange/re-zoom; time cursor = timeToCoordinate(newest bar) + frac x live barSpacing (logicalToCoordinate(i+1)-logicalToCoordinate(i)), frac from the server clock; cursor always mounted, hidden via .chart-expiry-hidden until seated; AreaSeries autoscaleInfoProvider widens the range to the ROUND ENTRY price, manual price-scale mode removed; Histogram autoscaleInfoProvider = 0..max(volume over whole series); closed bars written with the exact server close (historicalUpdate for late closes), only the in-progress bar is eased; RAF stops easing when converged and drops to a 30 fps idle cadence for glow/cursor; overlays (glow, cursor, label) at <=30 fps; plot offsets cached on create/resize/visibility (no per-frame layout reads); glow canvas caches its size; visibilitychange->visible re-applies the store; matchStore selector narrowed to scalars, countdown text moved into a tiny ExpiryTagTime child; dead 'tick'/getInitialChartCandles/sessionStorage/finalBattleSnapshot.candles/per-battle series cache paths removed."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/chartGeometryService.js",
+   "summary": "NEW pure helpers used by NewChart and pinned by specs: fixedViewportOptions, cursorFraction (clamp 0..1.25), cursorX, barSpacingFromLogicals, widenAutoscaleToInclude (ROUND ENTRY), volumeAutoscaleInfo (0..maxVolume), volumeBarColor, buildSeriesData (one bar per second incl. flat candles)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/chartClockService.js",
+   "summary": "NEW server-clock estimate: EMA (alpha 0.2, snap on >2 s step) of server_time - Date.now() fed from candleClosed/candleBatch; serverNowMs() drives the time cursor."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/utils/chartNormalization.js",
+   "summary": "normalizeCandle/normalizeLineChartTick now pass server_time and partial through; bucket_ts (when present) wins over the tick's ms timestamp; ticks are flagged partial."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/utils/useWebSocket.js",
+   "summary": "Line-chart handlers only (+1 import): onLineChartConnect no longer emits subscribe or hydrates from session (server emits candleBatch on connection); onCandleBatch: server_time -> clock, replace:true -> store.replaceCandles (legacy no-flag batch still merges), newest closed second recorded, pending tick dropped, subscribers notified with replace flag; onCandleClosed: accepts every second incl. battle_id null (no active-battle filter), feeds the clock, drops a stale pending tick, appendClosedCandle, no sessionStorage write; priceUpdate->chart block: bucket_ts + volume + server_time forwarded (fallback to the tick second for old servers); forceLineChartSync sends subscribe {scope,'reason':'resync'}; resubscribeLineChart is connect-only (no unsubscribe/subscribe gap); removed the now-unused appendCandleClosedToSession import."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/index.css",
+   "summary": "Added .chart-expiry-line.chart-expiry-hidden / .chart-expiry-tag.chart-expiry-hidden { visibility: hidden } (cursor always mounted, visibility via class). Existing chart rules untouched."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/utils/persistCandleClosedSession.js",
+   "summary": "Converted to an inert shim (all exports no-ops; clearCandleClosedSession removes the legacy sessionStorage key once). Physical deletion needs 9 call sites outside my region (see requests)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/chartHydrationService.js",
+   "summary": "Converted to an inert shim (hydrateLineChartFromSessionIfEmpty is a no-op); still threaded through useWebSocket's store-driven transition (outside my region)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/chartStreamService.js",
+   "summary": "DELETED (dead: register() was never wired; chart-motion F8)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/utils/hydrateMatchFromResume.js",
+   "summary": "Dropped the candle hydration block (recentCandles / finalBattleSnapshot.candles -> lineChartStore) and the lineChartStore import."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/screens/Matches.jsx",
+   "summary": "Dropped the cooldown re-hydration of lineChartStore from finalBattleSnapshot.candles (effect, chartHydratedRef, the finalBattleSnapshot/cooldownActiveFlag selectors and the lineChartStore import)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/components/ResumeSyncBridge.jsx",
+   "summary": "Removed ONLY the lineChartStore -> recentCandles persistence subscriber (effect + chartSaveTimerRef + CHART_SAVE_DEBOUNCE_MS). The match-slice subscriber (agent C's region) is untouched."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/finalBattleSnapshotService.js",
+   "summary": "buildFinalBattleSnapshot no longer takes lineChartPrices nor emits candles (candles always undefined). CRLF preserved."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/battleEndTransitionService.js",
+   "summary": "captureFinalBattleSnapshotIntoStore no longer passes lineChartPrices (chart candles not captured at battle end)."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/battleNewBattleStartedTransitionService.js",
+   "summary": "No chart reset at new battle: removed resetCandleClosedSessionForBattle and the line-chart unsubscribe/resubscribe; still forwards the entry price to chart subscribers; accepts (ignores) the legacy params so the useWebSocket call site is unchanged."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/battleSnapshotTransitionService.js",
+   "summary": "Same: no session reset, no line-chart resubscribe on battle-id switch; legacy params accepted and ignored."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/stores/lineChartStore.test.js",
+   "summary": "NEW node --test spec (12 tests): bucket normalisation, dedupe by second, upsertSorted, replace semantics, in-progress merge + exact close precedence, flat cooldown candles, late close ordering, no-op round reset, 900 cap, whole-series maxVolume, revision counter."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/chartGeometryService.test.js",
+   "summary": "NEW node --test spec (8 tests): fixed viewport, cursor fraction/clamp, continuous cursor hand-off across a bar append, null handling, live bar spacing, ROUND ENTRY range widening, histogram 0..max ($100k > $10k), series build with flat candles."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/services/chartClockService.test.js",
+   "summary": "NEW node --test spec (4 tests): EMA, snap on clock step, invalid samples."
+  },
+  {
+   "path": "/home/claude/wb/frontend/src/live/utils/chartNormalization.test.js",
+   "summary": "NEW node --test spec (4 tests): UnifiedCandlePayload shape, defaults, bucket_ts precedence, legacy tick."
+  }
+ ],
+ "behaviour_changes": [
+  "Chart history is the server window only: candleBatch {replace:true} REPLACES the local series (no merge with sessionStorage, resume snapshot or finalBattleSnapshot candles). Two devices connecting at different times render identical bars.",
+  "The line-chart store is one continuous 1 bar/second series across rounds and cooldown (flat candles with battle_id null accepted); it is never reset at battleEnd / newBattleStarted / battleSnapshot id switch / cooldownEnded. Cap raised from 300 to 900 candles.",
+  "No vertical cliff on sign-in/resume: the series is setData from the server batch (active round included); a store batch generation change is the only trigger for setData besides tab-visible resume.",
+  "Viewport is fixed (barSpacing = plotWidth/80, rightOffset 18) on create/resize; no setVisibleRange over N bars, no re-zoom at round boundaries, no manual price-scale mode. Pan/pinch still glides back after 2 s idle.",
+  "Time cursor (.chart-expiry-line/.chart-expiry-tag) is always mounted; x = pixel of newest bar + (serverNow - barStart) x live bar spacing, serverNow from an EMA of server_time. It keeps gliding through the cooldown because flat candles keep arriving; hidden (class) only until the series has data.",
+  "ROUND ENTRY line can no longer leave the visible price range (AreaSeries autoscaleInfoProvider widens the range to include it; price scale always autoscaled).",
+  "Volume histogram uses a fixed 0..max(volume over the whole loaded series) scale, so a $100k bar is always taller than a $10k bar and heights match across devices; the in-progress bar's volume now grows live from priceUpdate.volume.",
+  "Closed bars carry the exact server close (late closes applied with historicalUpdate or a store re-apply); only the in-progress bar is eased. RAF stops the price easing when converged and runs glow/cursor at ~30 fps; series.update only when the value changed; no per-frame getBoundingClientRect.",
+  "Client no longer emits `subscribe` on line-chart connect (server emits the batch); foreground/stale resync sends `subscribe {scope:'all', reason:'resync'}`; battle transitions no longer unsubscribe/resubscribe the line-chart room (no 60-100 ms candle gap).",
+  "priceUpdate forwarding uses bucket_ts + volume (falls back to the tick's own second and volume 0 on an old server build).",
+  "NewChart re-renders only on scalar changes (theme, battle id, cooldown flag, entry price scalars); the countdown text lives in a small child component.",
+  "chartStreamService.js deleted (dead code); persistCandleClosedSession.js and chartHydrationService.js are inert shims (no sessionStorage use anywhere)."
+ ],
+ "new_settings_env": [],
+ "tests_added": [
+  "src/stores/lineChartStore.test.js (12 tests)",
+  "src/live/services/chartGeometryService.test.js (8 tests)",
+  "src/live/services/chartClockService.test.js (4 tests)",
+  "src/live/utils/chartNormalization.test.js (4 tests)",
+  "Run from /home/claude/wb/frontend: node --test \"src/**/*.test.js\"  -> 28/28 pass"
+ ],
+ "verification": "cd /home/claude/wb/frontend && node --test \"src/**/*.test.js\" -> 28 tests, 28 pass, 0 fail. npx vite build -> clean (NewChart chunk 20.12 kB). ESLint: the repo's eslint.config.js crashes under ESLint 10 + eslint-plugin-react-hooks 7.1.1 for EVERY file (it references the legacy `reactHooks.configs['recommended-latest']`; the flat one is `configs.flat['recommended-latest']`) — pre-existing, verified on untouched src/main.jsx. I linted all touched files with an otherwise identical temporary flat config (removed afterwards) and compared against the HEAD version of each file linted the same way: NewChart.jsx 48 problems -> 1 (the same latch setState-in-effect pattern the old file had twice), useWebSocket.js 26 -> 26 (identical set, all in untouched regions), Matches.jsx / ResumeSyncBridge.jsx / battleEndTransitionService.js identical to baseline, all other touched/new files 0. git diff --check only flags CR on added lines of finalBattleSnapshotService.js, which was CRLF at HEAD and stays CRLF (all other files LF, verified by CR counts). Read-only check of agent A's current line-chart.gateway.ts / redis.subscriber.ts confirms the field names I rely on: candleBatch.replace:true, partial:true on the last element, server_time (ms) on candleBatch/candleClosed, priceUpdate.bucket_ts (epoch s) + volume, subscribe {reason:'resync'}. No runtime verification against the running stack (it runs the old build; the integration agent runs tools/chart-parity-capture.cjs and tools/round-boundary-shots.cjs after the restart).",
+ "requests_for_other_agents": [
+  {
+   "agent": "wave-2 pwa-shell (useWebSocket.js owner)",
+   "file": "/home/claude/wb/frontend/src/utils/useWebSocket.js",
+   "change": "Finish removing the session-candle plumbing so the two shims can be deleted: (1) delete the import block `import { clearCandleClosedSession, loadCandleClosedSessionForBattle, resetCandleClosedSessionForBattle } from \"./persistCandleClosedSession\";` and `import { hydrateLineChartFromSessionIfEmpty as hydrateLineChartFromSessionIfEmptyHelper } from \"../live/services/chartHydrationService\";`; (2) in applyAtomicBattleReset (~line 197) drop `clearCandleClosedSession,` from the runAtomicBattleReset({...}) call; (3) in onMarketSnapshot (~725) and onBattleSnapshot (~867) drop `resetCandleClosedSessionForBattle, lineChartSocketRef, lineChartScopeRef, resubscribeLineChart, delayMs` from applyBattleSnapshotBattleIdSwitch({...}); (4) in onNewBattleStarted (~904) drop the same five from applyNewBattleStartedTransition({...}); (5) in the store-driven transition effect (~1478) drop `lineChartStore, resetCandleClosedSessionForBattle, resubscribeLineChart, lineChartSocketRef, lineChartScopeRef, hydrateLineChartFromSessionIfEmpty, loadCandleClosedSessionForBattle`; (6) in captureFinalBattleSnapshot (~1086) drop `lineChartStore,`; (7) requestLineChartBackfill + lineChartBattleCursorRef / lineChartHasMoreBattlesRef / lineChartBackfillInFlightRef / pendingLineChartBackfillRef and the `has_more` cursor branch in onCandleBatch are dead under C1 (server never pages, no caller of api.requestLineChartBackfill) — remove. Then delete /home/claude/wb/frontend/src/utils/persistCandleClosedSession.js, /home/claude/wb/frontend/src/live/services/chartHydrationService.js, /home/claude/wb/frontend/src/live/services/battleLineChartResubscribeService.js (now unreferenced) and /home/claude/wb/frontend/src/live/pipeline/chartPipeline.js (its only importer, chartStreamService.js, is deleted)."
+  },
+  {
+   "agent": "wave-2 pwa-shell (or integration)",
+   "file": "/home/claude/wb/frontend/src/live/services/battleResetService.js",
+   "change": "Remove the `clearCandleClosedSession` parameter and its call, and the line `lineChartStore.getState().resetLineChart();` (now a no-op by contract C1). Same in /home/claude/wb/frontend/src/live/services/storeDrivenBattleTransitionService.js: delete the params `resetCandleClosedSessionForBattle, resubscribeLineChart, lineChartSocketRef, lineChartScopeRef, hydrateLineChartFromSessionIfEmpty, loadCandleClosedSessionForBattle, lineChartStore`, the calls `resetCandleClosedSessionForBattle(battleId);`, `lineChartStore.getState().resetLineChart();`, the `resubscribeLineChart(lineChartSock, payload);` block and both `hydrateLineChartFromSessionIfEmpty({...})` calls (the `prevBattle === battleId` early return becomes a plain `return;`)."
+  },
+  {
+   "agent": "C. pwa-panel",
+   "file": "/home/claude/wb/frontend/src/components/ResumeSyncBridge.jsx",
+   "change": "recentCandles is never read any more (hydrateMatchFromResume no longer restores candles). In the match-slice subscriber and both flush paths delete the `recentCandles: ...` property (lines `recentCandles: Array.isArray(prices) ? prices.slice(-50) : [],` x3 and the `const recentCandles = ...` block + `recentCandles,` in the subscriber) and the now-unused `const prices = lineChartStore.getState().prices;` reads + `lineChartStore` import. In /home/claude/wb/frontend/src/stores/appResumeStore.js remove `recentCandles` from initialState, mergeResumePayload (the `const recentCandles = ...` block and the field), clearSnapshot and partialize, plus MAX_CANDLES_SNAPSHOT / trimFinalBattleSnapshotForStorage (finalBattleSnapshot.candles is now always undefined)."
+  },
+  {
+   "agent": "integration agent (file unowned)",
+   "file": "/home/claude/wb/frontend/eslint.config.js",
+   "change": "`npx eslint` crashes for every file under ESLint 10 + eslint-plugin-react-hooks 7.1.1 (\"A config object has a plugins key defined as an array of strings\"). Change `reactHooks.configs['recommended-latest'],` to `reactHooks.configs.flat['recommended-latest'],` in the `extends` array. Note the flat preset enables react-hooks 7 rules (refs, purity, set-state-in-effect) that report ~26 pre-existing problems in useWebSocket.js and a few in Matches.jsx/ResumeSyncBridge.jsx; decide whether to keep them as errors."
+  },
+  {
+   "agent": "A. chart-api",
+   "file": "/home/claude/wb/backend/apps/api/src/ws/line-chart.gateway.ts",
+   "change": "No code change requested — confirmation only. The client now relies on exactly: candleBatch {candles ascending 1/s, last element partial:true, replace:true, server_time ms} emitted on connection and on `subscribe {scope:'all', reason:'resync'}` (the client never sends a reason-less subscribe on connect any more); candleClosed every second incl. cooldown seconds with battle_id null and server_time ms; priceUpdate.bucket_ts in epoch SECONDS and volume = running $ notional of that bucket. Your current source already matches all of these."
+  },
+  {
+   "agent": "integration agent",
+   "file": "/home/claude/wb/frontend/src/components/NewChartSessionAndLoadingOverlay.jsx",
+   "change": "Optional tidy-up: `chartDataFromSession` is now a constant false in lineChartStore; the selector `const chartDataFromSession = lineChartStore((s) => s.chartDataFromSession);` and the commented-out badge can be removed."
+  }
+ ],
+ "unfinished": [
+  "persistCandleClosedSession.js and chartHydrationService.js were converted to inert no-op shims instead of being physically deleted: 9 import/call sites live outside my useWebSocket.js region and in battleResetService.js / storeDrivenBattleTransitionService.js (not in my ownership list). Functionally the sessionStorage mirror is gone; the exact removal patch is in requests_for_other_agents.",
+  "battleLineChartResubscribeService.js and live/pipeline/chartPipeline.js are now unreferenced dead files (outside my ownership) — listed for deletion in the wave-2 request.",
+  "Runtime verification against the running workbench was not possible in wave 1 (the stack runs the old backend/frontend build); the smokes tools/chart-parity-capture.cjs and tools/round-boundary-shots.cjs must be run by the integration agent after the restart to confirm the five acceptance criteria visually.",
+  "ESLint could not be run through the repo's own eslint.config.js (pre-existing crash under ESLint 10); touched files were linted with an equivalent temporary flat config and compared to the HEAD baseline (see verification)."
+ ],
+ "notes_for_pdf": "**What was wrong.** The trading chart assembled its history from four different, device-specific sources: the server's `candleBatch` (which only contained the last three *completed* rounds, never the active one), whatever live ticks this device happened to receive, a per-tab `sessionStorage` mirror of closed candles, and a \"resume snapshot\" written by `ResumeSyncBridge`. Every one of those was merged into `lineChartStore` and then trimmed to 200–300 points. The result was that a phone signing in mid-round drew a single vertical segment from an hours-old close to the live price (the \"cliff\"), and two devices that connected at different times held different bar sets, so the charts never matched. On top of that, `NewChart.jsx` tore the series down at every round boundary (the store was reset at `battleEnd` and `newBattleStarted`) and re-zoomed with `setVisibleRange` over however many bars existed — with one bar that collapsed the zoom (giant bars, newest bar at 25 % of the plot), which is the \"time line jumps far left, then moves right when the next round starts\" symptom. The time cursor was driven by a hand-built map that read `timeScale().options().barSpacing`, a value lightweight-charts never updates (always the default 6 px), and by the phone's own clock, so it sawtoothed and stalled. The ROUND ENTRY line was a native price line, which lightweight-charts excludes from autoscale, so after ~60 s it scrolled off the axis. The volume histogram autoscaled to the visible window and the in-progress bar had no volume, so a $10k bar could look as tall as an earlier $100k bar. Finally the RAF loop called `series.update` and two `getBoundingClientRect()` reads every frame forever.\n\n**What changed (frontend, `/home/claude/wb/frontend`).** Contract C1 makes the server the single source: the `/line-chart` gateway now publishes one continuous 1-second candle stream that spans rounds *and* the cooldown (flat candles when nothing traded), sends the last 600 seconds plus the in-progress bucket as `candleBatch { replace: true }` on connection, and adds `bucket_ts` + `volume` to `priceUpdate`.\n\n- `src/stores/lineChartStore.js` is now that stream: one array, deduped by bucket second, capped at 900 (15 min). `replaceCandles` drops everything local on a batch; `appendClosedCandle` appends the exact server close; `upsertInProgress` only moves the newest bar's value and volume. `resetLineChart()` deliberately keeps the candles — the battle transition helpers still call it, but a new round no longer wipes the chart.\n- `src/utils/useWebSocket.js` (line-chart handlers only): no `subscribe` on connect (the server emits the batch itself), `subscribe { reason: 'resync' }` on foreground/stale, `candleClosed` accepted for every second including `battle_id: null` cooldown candles, `server_time` fed into a server-clock estimate (`src/live/services/chartClockService.js`), `priceUpdate` forwarded with `bucket_ts`/`volume`. Battle transitions no longer unsubscribe/resubscribe the room (that 60–100 ms gap lost a candle per device).\n- `src/components/NewChart.jsx`: `setData` only when the store's batch generation changes or the tab becomes visible again, `update` otherwise. The viewport is fixed once (`barSpacing = plotWidth / 80`, `rightOffset 18`) on create and resize — never re-zoomed. The cursor is a real wall-clock cursor: `x = timeToCoordinate(newestBar) + frac × liveBarSpacing`, where `frac = clamp((serverNow − barStart)/1000, 0, 1.25)` and the live spacing comes from `logicalToCoordinate(i+1) − logicalToCoordinate(i)`. Because flat candles keep arriving during the cooldown, the cursor stays where the round ended and glides right, exactly like the bars around it. It is always mounted; a class hides it only until the first bar exists. The AreaSeries gets an `autoscaleInfoProvider` that widens the range to include the entry price (manual price-scale mode is gone), and the histogram gets a fixed `0..max(volume over the whole loaded series)` scale. Closed bars are written with the exact server close (late closes via `update(bar, true)`); only the in-progress bar is eased; the loop drops to ~30 fps once converged; plot offsets are measured on resize only. Pure helpers live in `src/live/services/chartGeometryService.js`.\n- Removed: the `sessionStorage` candle mirror (`persistCandleClosedSession.js` is now an inert shim), resume-snapshot candles (`hydrateMatchFromResume.js`, `ResumeSyncBridge.jsx` chart subscriber, `Matches.jsx` re-hydration), `finalBattleSnapshot.candles`, and the dead `chartStreamService.js`.\n\n**Why it is safe.** No money math is touched; the chart is display-only and every path that mutates it is covered by 28 `node --test` specs (`node --test \"src/**/*.test.js\"`): dedupe/replace/in-progress precedence, flat cooldown candles, late closes, the 900 cap, whole-series max volume, the fixed viewport, the cursor hand-off across an append, ROUND ENTRY range widening and the histogram scale. A legacy server batch without `replace: true` still merges, and a `priceUpdate` without `bucket_ts` falls back to the tick's own second, so the client also runs against the old backend. `npx vite build` is clean and lint is at or below the previous baseline for every touched file (the repo's `eslint.config.js` needs the one-line fix listed in the requests to run under ESLint 10 at all).\n\n**How to test.** After the stack restart: sign in on a phone mid-round — the chart must show the current round from its start with no vertical segment; open a desktop tab at a different time and compare (`tools/chart-parity-capture.cjs`) — same bars; watch a round end (`tools/round-boundary-shots.cjs`): the dashed time line stays at the end of the round and keeps moving right through the cooldown with no jump to the left and no zoom change; let the price trend away from ROUND ENTRY — the purple line must stay on screen; place a $100k order then a $10k order — the second bar must be visibly shorter. DevTools Performance: with no ticks the chart pane should not repaint at 60 fps."
+}
