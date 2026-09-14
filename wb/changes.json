@@ -332,5 +332,29 @@
     ],
     "tests": "eslint clean on the rewritten page · vite build · browser checks 20/20 (config seeding, both previews, quote-tick floor note, save round-trip pushed to engine, override toggle, live log columns, field/search filters, audit summary and multiplier, replay 5-decimal price)",
     "notes": "Date Range filter did nothing and search/field filtered only the current page; Reference Amount/Pips were not editable; the audit list contained only failures so Pass Rate was meaningless."
+  },
+  {
+    "id": "c0026",
+    "at": "2026-09-14T01:12:00Z",
+    "repo": "backend",
+    "status": "verified",
+    "title": "Admin risk & inspection tools: one settlement record per round (RoundValuation) read by Risk Breaches, Battle Inspector, Price Movement Audit and Risk Terminal",
+    "files": [
+      "patches/backend/0007-*.patch"
+    ],
+    "tests": "shared 232/235 (3 pre-existing) · engine 85/97 (12 pre-existing; terminal harness 10/10 incl. legacy vs organic) · new specs round-valuation 5, directive-scenarios 3, round-context 2, price-audit-replay-hybrid 3 · tsc shared/api/engine/workers · API checks on live rounds · browser smoke 14/14 (tools/admin-tools-smoke.cjs)",
+    "notes": "Settlement (directive / legacy / tie) writes houseCashResult, shortfall, commission source, net real loser pool, real winners' profit, simulator figures and hedged users into npc_round_audit.settlement; older rounds are rebuilt on read with the model they were settled with. Risk Breaches: breach = shortfall, house cash scope, whole-period summary, resolution on rows, exact-instant ranges, ledger-based per-user PnL, RISK_BREACH alert scanner. Battle Inspector: settlement panel from the record, hedge netting by model, RPC separated, organic-aware live winner, participants per side, CANCELLED branch. Price Audit: single variance rule with swing fallback, expected path = formula for real trades + recorded NPC moves, freeze seconds stored, tick timestamps from the engine, validated status, honest CSV. Risk Terminal: tick projects with the settling model, company_net_position = house cash result, shortfall, Redis buffers for live rounds, in-flight guard, last tick served by REST, alerts endpoint. Also: roundHigh/roundLow repaired at settlement; duplicate stake ledger rows deduplicated."
+  },
+  {
+    "id": "c0027",
+    "at": "2026-09-14T01:12:00Z",
+    "repo": "admin",
+    "status": "verified",
+    "title": "Risk breaches, Battle Inspector, Price Movement Audit and Risk Management Terminal pages on the settlement record",
+    "files": [
+      "patches/admin/0007-*.patch"
+    ],
+    "tests": "eslint clean on the rewritten Risk Breaches page (other pages: only pre-existing findings) · vite build · browser smoke 14/14",
+    "notes": "Risk Breaches rewritten (presets, scope, server summary, shortfall / house cash columns, server-side Details, resolutions from the list). Battle Inspector: LIVE only on ACTIVE rows, local-day custom ranges, model / commission / house cash columns, settlement panel, participants per side. Price Audit: All Time, numeric threshold, swing marker, replay method. Terminal: model + leader, house cash / commission / shortfall per scenario, breach badges, integrity alerts, refetch on round change. Workbox precache limit raised."
   }
 ]

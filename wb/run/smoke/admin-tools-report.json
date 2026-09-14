@@ -1,0 +1,75 @@
+{
+  "at": "2026-09-14T01:08:17.320Z",
+  "checks": [
+    {
+      "name": "risk breaches: period=all lists rounds with a server summary",
+      "pass": true,
+      "detail": "1 rows"
+    },
+    {
+      "name": "risk breaches: scope filter round-trips to the server",
+      "pass": true,
+      "detail": "1 rows (breach_only)"
+    },
+    {
+      "name": "risk breaches: Details opens the server audit (settlement breakdown + users)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "risk breaches: Acknowledge persists and shows",
+      "pass": true,
+      "detail": "BUY WON|ACKNOWLEDGED|WINNER|ACKNOWLEDGED"
+    },
+    {
+      "name": "risk terminal: live state shows the settlement model and both scenarios",
+      "pass": true,
+      "detail": "Settlement model: Organic (directive)"
+    },
+    {
+      "name": "risk terminal: alerts and review log sections render",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "price audit: All Time lists settled rounds with PASS/FAIL verdicts",
+      "pass": true,
+      "detail": "10 rows"
+    },
+    {
+      "name": "price audit: Fail filter is server-side (only FAIL rows or an empty message)",
+      "pass": true,
+      "detail": "0 rows"
+    },
+    {
+      "name": "price audit: details replay shows expected vs actual with the replay method",
+      "pass": true,
+      "detail": "RECORDED MOVES (85 MATCHED, 1 RE-RUN)"
+    },
+    {
+      "name": "battle inspector: list shows model / commission / house cash columns",
+      "pass": true,
+      "detail": "10 rows"
+    },
+    {
+      "name": "battle inspector: LIVE badge only on the active round",
+      "pass": true,
+      "detail": "1 LIVE badge(s)"
+    },
+    {
+      "name": "battle inspector: status filter reaches the server",
+      "pass": true,
+      "detail": "COMPLETED|COMPLETED|COMPLETED"
+    },
+    {
+      "name": "battle inspector: detail shows the settlement panel and participants per side",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "no console / page errors on the four pages",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}
