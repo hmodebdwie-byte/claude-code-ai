@@ -1,32 +1,34 @@
-From f984433073bf0baf3080402a59bf80dc454a6a69 Mon Sep 17 00:00:00 2001
+From e37fb938b50c0a511525fe57a894fb32b5f6dc4d Mon Sep 17 00:00:00 2001
 From: TickTrade Workbench <hmodebdwie1@gmail.com>
-Date: Sat, 19 Sep 2026 18:55:17 +0000
-Subject: [PATCH 1/3] feat(creator): port TickTrade Studio / Creator Platform
- onto the round-9 backend
+Date: Sat, 19 Sep 2026 21:27:07 +0000
+Subject: [PATCH] feat(creator): port TickTrade Studio onto the round-12
+ backend
 
-Adds the Creator Platform to the current backend line. Round 9 contained no
-creator code at all, so this is a port, not a fix-up.
+Round 12 contains no Creator Platform code, so this is the same port previously
+made onto round 9, re-applied to the newer line. The three seam files
+(app.module.ts, apps/api/package.json, packages/shared/prisma/schema.prisma) are
+byte-identical between round 9 and round 12, so the port applies verbatim; none
+of round 12's 19 changed or 5 new files touch it.
 
-New:
-- apps/api/src/creator/ (24 files): workspace/authoring/access/expert/history,
-  intelligence, market, research, data and stake-source services + controllers.
-- packages/tickscript/ (14 files): the TickScript SDK contract and the
-  QuickJS-WASM sandbox used by both official and user scripts.
-- 4 Prisma migrations: creator_platform, creator_platform_v2,
-  creator_order_link, creator_discovery_index.
+New: apps/api/src/creator/ (24), packages/tickscript/ (14), and 4 Prisma
+migrations. Seam: import and register CreatorModule, add the
+@ticktrade/tickscript workspace dependency, and append 17 Creator* models plus
+2 User relation fields to schema.prisma with its existing CRLF endings.
 
-Integration seam kept deliberately small (4 edits):
-- app.module.ts: import + register CreatorModule.
-- apps/api/package.json: add the @ticktrade/tickscript workspace dependency.
-- schema.prisma: 17 Creator* models + 2 User relation fields, appended with the
-  file's existing CRLF endings so recorded patches still apply.
+Carries the fixes made on the round-9 port:
+- the two quadratic hot spots in the DataBank build (21x at 640k events,
+  byte-identical output),
+- percentile ranking rebuilt once per bank instead of per record,
+- every unavailable DataBank field now states why it is unavailable,
+- a CPU-aware supervisor deadline so a starved script is not killed while a
+  runaway one still is,
+- DELETE /creator/scripts/:id, so the 50-script private library limit is
+  recoverable; it refuses while a tool is still attached and never destroys a
+  live expert journal.
 
-Round-9 work is untouched: the 217 files that differ between the v5 tree and
-round 9 outside creator/ are round-9 upstream changes and were all kept.
-
-Verified: prisma generate, migrate deploy (creator migrations interleave
-correctly with round 9's 20260918090000 and 20260919120000), zero schema drift,
-and a clean api build.
+Verified on round 12: prisma migrate deploy with zero schema drift, clean api
+build, tickscript 25/25, api jest 58 suites / 335 tests, and live acceptance
+against a running stack (lifecycle 13/13, DataBank 8/8, paper expert 10/10).
 ---
  apps/api/package.json                         |    3 +-
  apps/api/src/app.module.ts                    |    2 +
@@ -41,7 +43,7 @@ and a clean api build.
  .../creator/creator-history-frame.worker.ts   |  106 +
  apps/api/src/creator/creator-history.math.ts  |  283 ++
  .../src/creator/creator-history.service.ts    |  847 ++++
- .../creator/creator-intelligence.service.ts   |  436 ++
+ .../creator/creator-intelligence.service.ts   |  447 ++
  .../api/src/creator/creator-market.service.ts |  996 +++++
  apps/api/src/creator/creator-protocol.ts      |   10 +
  apps/api/src/creator/creator-research.math.ts |  177 +
@@ -49,10 +51,10 @@ and a clean api build.
  .../creator/creator-stake-source.service.ts   |  131 +
  apps/api/src/creator/creator-trader.math.ts   |  224 +
  .../creator/creator-workspace.controller.ts   |  450 ++
- apps/api/src/creator/creator.controller.ts    |  192 +
+ apps/api/src/creator/creator.controller.ts    |  198 +
  apps/api/src/creator/creator.dto.ts           |   81 +
  apps/api/src/creator/creator.module.ts        |   46 +
- apps/api/src/creator/creator.service.ts       | 1513 +++++++
+ apps/api/src/creator/creator.service.ts       | 1553 +++++++
  apps/api/src/creator/examples.ts              |  107 +
  .../migration.sql                             |  128 +
  .../migration.sql                             |  256 ++
@@ -60,13 +62,13 @@ and a clean api build.
  .../migration.sql                             |    1 +
  packages/shared/prisma/schema.prisma          |  274 ++
  packages/tickscript/contract.cjs              |  341 ++
- packages/tickscript/index.cjs                 |  108 +
+ packages/tickscript/index.cjs                 |  165 +
  packages/tickscript/index.d.ts                |   45 +
  packages/tickscript/intelligence-catalog.json | 3635 +++++++++++++++++
- packages/tickscript/intelligence-engine.cjs   |  588 +++
- packages/tickscript/intelligence-measured.cjs |  565 +++
+ packages/tickscript/intelligence-engine.cjs   |  618 +++
+ packages/tickscript/intelligence-measured.cjs |  579 +++
  .../tickscript/intelligence-reference.cjs     | 1540 +++++++
- packages/tickscript/intelligence-utils.cjs    |   32 +
+ packages/tickscript/intelligence-utils.cjs    |   37 +
  packages/tickscript/intelligence-worker.cjs   |    4 +
  packages/tickscript/package.json              |   14 +
  packages/tickscript/sdk.d.ts                  |  268 ++
@@ -76,7 +78,7 @@ and a clean api build.
  packages/tickscript/test/runtime.test.cjs     |  170 +
  packages/tickscript/worker.cjs                |  269 ++
  pnpm-lock.yaml                                |   71 +
- 48 files changed, 16582 insertions(+), 1 deletion(-)
+ 48 files changed, 16745 insertions(+), 1 deletion(-)
  create mode 100644 apps/api/src/creator/advanced-examples.ts
  create mode 100644 apps/api/src/creator/creator-access.service.ts
  create mode 100644 apps/api/src/creator/creator-authoring.service.ts
@@ -3496,10 +3498,10 @@ index 0000000..4988fb3
 +}
 diff --git a/apps/api/src/creator/creator-intelligence.service.ts b/apps/api/src/creator/creator-intelligence.service.ts
 new file mode 100644
-index 0000000..7377e0d
+index 0000000..6fca714
 --- /dev/null
 +++ b/apps/api/src/creator/creator-intelligence.service.ts
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,447 @@
 +import {
 +  BadRequestException,
 +  Injectable,
@@ -3849,11 +3851,22 @@ index 0000000..7377e0d
 +      sections: MODEL_CATALOG.sections.map((section: any) => ({
 +        ...section,
 +        fields: section.fields.map((f: any) => {
-+          const reason =
++          const value = get(f.key) ?? null;
++          const dependencyReason =
 +            issues[f.key] === undefined ? '' : bank.reasons[issues[f.key]];
++          // Only the 190 fields listed in the catalog's dependency map can get a
++          // dependency-derived reason. The 10 benchmark.* percentiles are not in
++          // that map, so when their source metric is not finite they used to ship
++          // as a bare null with reason '' - a value the reader cannot interpret
++          // and which the bank contract does not allow. Any field that resolves
++          // to null now states why, and is marked unavailable rather than being
++          // presented as an observation.
++          const reason =
++            dependencyReason ||
++            (value === null ? 'Required source observations are unavailable' : '');
 +          return {
 +            ...f,
-+            value: get(f.key) ?? null,
++            value,
 +            source: reason
 +              ? 'unavailable'
 +              : f.key.startsWith('trackRecord.') ||
@@ -6354,10 +6367,10 @@ index 0000000..5ab16d2
 +}
 diff --git a/apps/api/src/creator/creator.controller.ts b/apps/api/src/creator/creator.controller.ts
 new file mode 100644
-index 0000000..72d240f
+index 0000000..2eca000
 --- /dev/null
 +++ b/apps/api/src/creator/creator.controller.ts
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,198 @@
 +import {
 +  Body,
 +  Controller,
@@ -6453,6 +6466,12 @@ index 0000000..72d240f
 +    @Body() dto: SaveScriptDto,
 +  ) {
 +    return this.service.save(req.user.userId, dto);
++  }
++  @Delete('scripts/:id') removeScript(
++    @Req() req: RequestUser,
++    @Param('id', ParseUUIDPipe) id: string,
++  ) {
++    return this.service.removeScript(req.user.userId, id);
 +  }
 +  @Post('templates/:id') template(
 +    @Req() req: RequestUser,
@@ -6691,10 +6710,10 @@ index 0000000..632748d
 +export class CreatorModule {}
 diff --git a/apps/api/src/creator/creator.service.ts b/apps/api/src/creator/creator.service.ts
 new file mode 100644
-index 0000000..b6b9f45
+index 0000000..503a44b
 --- /dev/null
 +++ b/apps/api/src/creator/creator.service.ts
-@@ -0,0 +1,1513 @@
+@@ -0,0 +1,1553 @@
 +import { BANK_METRICS } from './creator-bank.catalog';
 +import {
 +  BadRequestException,
@@ -7513,6 +7532,46 @@ index 0000000..b6b9f45
 +        'Stop this installation before removing it. Live expert journals must be retained; hide them from the chart instead',
 +      );
 +    return { removed: true };
++  }
++  /** Delete a script the owner no longer wants, so the 50-script private library
++   * limit is recoverable. Without this there was no route at all: once a library
++   * reached 50, "Apply - save privately" failed permanently with nothing in the
++   * product able to free a slot.
++   *
++   * The guards mirror `remove()` for installations, because deleting a script
++   * cascades to its versions, their installations and those installations'
++   * decisions: a running attachment must be stopped first, and a live expert
++   * journal is never destroyed. */
++  async removeScript(ownerId: number, id: string) {
++    const script = await this.prisma.creatorScript.findFirst({
++      where: { id, ownerId },
++      select: { id: true, name: true },
++    });
++    if (!script) throw new NotFoundException('Private script not found');
++
++    const installations = await this.prisma.creatorInstallation.findMany({
++      where: { version: { scriptId: id } },
++      select: { id: true, enabled: true },
++    });
++    if (installations.some((i) => i.enabled))
++      throw new BadRequestException(
++        'Stop this tool everywhere before deleting it. Remove it from your chart and cards first',
++      );
++    if (
++      installations.length &&
++      (await this.prisma.creatorPaperDecision.count({
++        where: {
++          installationId: { in: installations.map((i) => i.id) },
++          mode: 'live',
++        },
++      })) > 0
++    )
++      throw new BadRequestException(
++        'Live expert journals must be retained; this script cannot be deleted',
++      );
++
++    await this.prisma.creatorScript.delete({ where: { id } });
++    return { removed: true, name: script.name };
 +  }
 +  async decisions(ownerId: number, id: string) {
 +    if (
@@ -9370,18 +9429,51 @@ index 0000000..9c4bd5f
 +};
 diff --git a/packages/tickscript/index.cjs b/packages/tickscript/index.cjs
 new file mode 100644
-index 0000000..767805f
+index 0000000..19de107
 --- /dev/null
 +++ b/packages/tickscript/index.cjs
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,165 @@
 +"use strict";
 +const { fork } = require("node:child_process");
 +const path = require("node:path");
 +const { randomUUID } = require("node:crypto");
++const fs = require("node:fs");
++const os = require("node:os");
 +const contract = require("./contract.cjs");
++
++// CPU actually burned by a child process, in milliseconds, or null when this
++// platform does not expose it. Linux only (/proc/<pid>/stat fields 14 and 15,
++// utime and stime, in clock ticks). Used to tell a runaway script apart from a
++// healthy one that is merely starved of CPU.
++const CLOCK_TICK_MS = 1000 / 100; // Linux USER_HZ is 100 on every supported target
++function childCpuMs(pid) {
++  if (process.platform !== "linux" || !pid) return null;
++  try {
++    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
++    // comm can contain spaces and parentheses, so start after the final ')'.
++    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
++    const utime = Number(fields[11]);
++    const stime = Number(fields[12]);
++    if (!Number.isFinite(utime) || !Number.isFinite(stime)) return null;
++    return (utime + stime) * CLOCK_TICK_MS;
++  } catch {
++    return null;
++  }
++}
++
 +class ScriptPool {
-+  constructor({ timeoutMs = 8000, maxQueued = 24 } = {}) {
++  constructor({
++    timeoutMs = 8000,
++    maxQueued = 24,
++    maxDeadlineGrants = 2,
++    starvedCpuRatio = 0.9,
++  } = {}) {
++    this.starvedCpuRatio = starvedCpuRatio;
 +    this.timeoutMs = timeoutMs;
++    // A starved child may be granted at most this many extra deadline periods.
++    // A script that is actually burning CPU never qualifies, so the ceiling on
++    // a misbehaving script stays timeoutMs.
++    this.maxDeadlineGrants = maxDeadlineGrants;
 +    this.maxQueued = maxQueued;
 +    this.queue = [];
 +    this.active = null;
@@ -9439,16 +9531,40 @@ index 0000000..767805f
 +    }
 +    const task = this.queue.shift();
 +    this.active = task;
-+    task.timer = setTimeout(() => {
++    task.grants = 0;
++    task.cpuAtStart = childCpuMs(this.child?.pid);
++    const onDeadline = () => {
 +      if (this.active !== task) return;
 +      const child = this.child;
++      // The guest charges its own 80ms budget in CPU time, so Docker throttling
++      // cannot fail a healthy script there. This outer timer is wall-clock and
++      // could not previously tell those two cases apart: under CPU pressure it
++      // SIGKILLed the shared worker even though the child had barely run, which
++      // also destroyed the queued work of every other script on this pool.
++      // Extend only when the child demonstrably did not get the CPU. A runaway
++      // script burns CPU by definition and is still killed on the first tick.
++      // Threshold from measurement, not taste: on an idle box this worker runs at
++      // 110-120% of a core (it has its own GC thread), so anything at or above a
++      // full core is getting all the CPU it asked for and its wall-clock time is
++      // its own doing. Below that the box is contended.
++      const cpuNow = childCpuMs(child?.pid);
++      const starved =
++        task.cpuAtStart !== null &&
++        cpuNow !== null &&
++        cpuNow - task.cpuAtStart < this.timeoutMs * this.starvedCpuRatio;
++      if (starved && task.grants < this.maxDeadlineGrants) {
++        task.grants++;
++        task.timer = setTimeout(onDeadline, this.timeoutMs);
++        return;
++      }
 +      this.child = null;
 +      this.active = null;
 +      child?.kill("SIGKILL");
 +      this.failed++;
 +      task.reject(Error("Script exceeded its execution deadline"));
 +      this.pump();
-+    }, this.timeoutMs);
++    };
++    task.timer = setTimeout(onDeadline, this.timeoutMs);
 +    this.child.send({ id: task.id, request: task.request }, (error) => {
 +      if (error && this.active === task) {
 +        clearTimeout(task.timer);
@@ -13176,10 +13292,10 @@ index 0000000..fcc1da9
 +}
 diff --git a/packages/tickscript/intelligence-engine.cjs b/packages/tickscript/intelligence-engine.cjs
 new file mode 100644
-index 0000000..d16838d
+index 0000000..412ba35
 --- /dev/null
 +++ b/packages/tickscript/intelligence-engine.cjs
-@@ -0,0 +1,588 @@
+@@ -0,0 +1,618 @@
 +"use strict";
 +const {
 +  buildTraderIntelligence,
@@ -13380,7 +13496,13 @@ index 0000000..d16838d
 +        ? "Requires recorded " + unavailable.join(", ")
 +        : "";
 +      const value = get(record, key);
-+      if (typeof value === "number" && !finite(value))
++      // A field can arrive unavailable as a non-finite number OR as an explicit
++      // null (the peer-benchmark percentiles do the latter when their source
++      // metric is not finite). `typeof null` is "object", so the older check
++      // only caught the first form and those fields shipped as a bare null with
++      // no explanation, which the bank contract does not allow.
++      if (value === null || value === undefined ||
++          (typeof value === "number" && !finite(value)))
 +        reason ||= "Required source observations are unavailable";
 +      if (reason && typeof value === "number") put(record, key, null);
 +      provenance[key] = {
@@ -13532,24 +13654,48 @@ index 0000000..d16838d
 +    reactionPercentile: "behavior.reactionSpeed",
 +    capitalPercentile: "capital.riskAdjustedCapacity",
 +  };
++  // Cohorts and rank ladders are the same for every record, so build them once.
++  // Previously each record rebuilt one array per spec and percentileRank sorted
++  // it again, i.e. records x specs array builds and sorts (400 x 8 = 3200 sorts
++  // of a 400-element array on a full bank). Ranks are computed from the same
++  // sorted ladder with the same below + equal/2 formula, so values are identical.
++  const peersByArchetype = new Map();
++  for (const x of records) {
++    const k = x.identity.archetype;
++    let bucket = peersByArchetype.get(k);
++    if (bucket === undefined) peersByArchetype.set(k, (bucket = []));
++    bucket.push(x);
++  }
++  const ladder = (values) => values.filter(Number.isFinite).sort((a, b) => a - b);
++  const clampPercent = (v) => (v < 0 ? 0 : v > 100 ? 100 : v);
++  // Rank on a pre-sorted ladder: count strictly-below and equal by binary search.
++  const rankOn = (sorted, target) => {
++    if (!sorted.length || !Number.isFinite(target)) return 0;
++    let lo = 0, hi = sorted.length;
++    while (lo < hi) { const m = (lo + hi) >> 1; if (sorted[m] < target) lo = m + 1; else hi = m; }
++    const below = lo;
++    hi = sorted.length;
++    while (lo < hi) { const m = (lo + hi) >> 1; if (sorted[m] <= target) lo = m + 1; else hi = m; }
++    const equal = lo - below;
++    return clampPercent(((below + equal * 0.5) / sorted.length) * 100);
++  };
++  const archetypeLadders = new Map();
++  for (const [k, bucket] of peersByArchetype)
++    archetypeLadders.set(k, ladder(bucket.map((x) => x.intelligence.score)));
++  const specLadders = new Map();
++  for (const [name, path] of Object.entries(rankSpecs))
++    specLadders.set(name, ladder(records.map((x) => get(x, path))));
 +  for (const r of records) {
-+    const peers = records.filter(
-+      (x) => x.identity.archetype === r.identity.archetype,
-+    );
++    const archetype = r.identity.archetype;
 +    r.benchmark = {
-+      cohortSize: peers.length,
++      cohortSize: peersByArchetype.get(archetype).length,
 +      archetypePercentile: finite(r.intelligence.score)
-+        ? percentileRank(
-+            peers.map((x) => x.intelligence.score),
-+            r.intelligence.score,
-+          )
++        ? rankOn(archetypeLadders.get(archetype), r.intelligence.score)
 +        : null,
 +    };
 +    for (const [name, path] of Object.entries(rankSpecs)) {
 +      const val = get(r, path);
-+      r.benchmark[name] = finite(val)
-+        ? percentileRank(records.map((x) => get(x, path)).filter(finite), val)
-+        : null;
++      r.benchmark[name] = finite(val) ? rankOn(specLadders.get(name), val) : null;
 +    }
 +  }
 +
@@ -13770,10 +13916,10 @@ index 0000000..d16838d
 +module.exports = { buildIntelligence, researchSignals };
 diff --git a/packages/tickscript/intelligence-measured.cjs b/packages/tickscript/intelligence-measured.cjs
 new file mode 100644
-index 0000000..76a0f8e
+index 0000000..3e5e4d4
 --- /dev/null
 +++ b/packages/tickscript/intelligence-measured.cjs
-@@ -0,0 +1,565 @@
+@@ -0,0 +1,579 @@
 +"use strict";
 +const { mean, q, wilson, effective } = require("./intelligence-utils.cjs");
 +const root = { TickTradeResearchAnalytics: { mean, q, wilson, effective } };
@@ -13783,10 +13929,13 @@ index 0000000..76a0f8e
 +    sum = (a) => a.reduce((s, v) => s + v, 0),
 +    mean = A.mean,
 +    q = A.q;
-+  const sd = (a) =>
-+    a.length > 1
-+      ? Math.sqrt(sum(a.map((x) => (x - mean(a)) ** 2)) / (a.length - 1))
-+      : null;
++  // Same loop-invariant hoist as intelligence-utils.cjs sd(): mean(a) was being
++  // recomputed for every element, making this O(n^2). Result is unchanged.
++  const sd = (a) => {
++    if (a.length <= 1) return null;
++    const m = mean(a);
++    return Math.sqrt(sum(a.map((x) => (x - m) ** 2)) / (a.length - 1));
++  };
 +  const ratio = (a, b) =>
 +    Number.isFinite(a) && Number.isFinite(b) && b !== 0 ? a / b : null;
 +  const n = (x) => (typeof x === "number" && Number.isFinite(x) ? x : null);
@@ -13799,9 +13948,20 @@ index 0000000..76a0f8e
 +  function enrich(data, snapshot) {
 +    const index = new Map(data.events.map((e, i) => [e.sequence, i])),
 +      profiles = new Map(snapshot.profiles.map((p) => [p.traderId, p]));
++    // Bucket the events by trader in one pass. This used to be a
++    // `data.events.filter(...)` inside the row loop, which is O(rows x events):
++    // at 800 traders x 640k events that scan alone cost ~23s and is on the
++    // DataBank load / profile-switch path. A forward pass appends in the same
++    // order filter produced, so every downstream metric is unchanged.
++    const eventsByTrader = new Map();
++    for (const e of data.events) {
++      let bucket = eventsByTrader.get(e.id);
++      if (bucket === undefined) eventsByTrader.set(e.id, (bucket = []));
++      bucket.push(e);
++    }
 +    for (const r of data.rows) {
 +      const p = profiles.get(r.id) || {},
-+        es = data.events.filter((e) => e.id === r.id),
++        es = eventsByTrader.get(r.id) || [],
 +        sizes = es.map((e) => e.amount),
 +        imp = es.map((e) => e.impact),
 +        aligned = es.map((e) => e.impact * e.sign),
@@ -15887,10 +16047,10 @@ index 0000000..5c32d99
 +module.exports = { buildTraderIntelligence, mean, deviation, percentileRank };
 diff --git a/packages/tickscript/intelligence-utils.cjs b/packages/tickscript/intelligence-utils.cjs
 new file mode 100644
-index 0000000..9b0a6f0
+index 0000000..ef7feb0
 --- /dev/null
 +++ b/packages/tickscript/intelligence-utils.cjs
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,37 @@
 +"use strict";
 +const sum = (v) => v.reduce((a, b) => a + b, 0),
 +  mean = (v) => (v.length ? sum(v) / v.length : null);
@@ -15900,10 +16060,15 @@ index 0000000..9b0a6f0
 +    i = (s.length - 1) * p;
 +  return s[Math.floor(i)] + (s[Math.ceil(i)] - s[Math.floor(i)]) * (i % 1);
 +};
-+const sd = (v) =>
-+  v.length > 1
-+    ? Math.sqrt(sum(v.map((x) => (x - mean(v)) ** 2)) / (v.length - 1))
-+    : null;
++// `mean(v)` is loop-invariant. It used to sit inside the map callback, so an
++// O(n) reduce ran once per element and sd() was O(n^2); it is the dominant cost
++// of a DataBank build. Hoisting is arithmetically identical - mean(v) is
++// deterministic for a given array, so every digit of the result is unchanged.
++const sd = (v) => {
++  if (v.length <= 1) return null;
++  const m = mean(v);
++  return Math.sqrt(sum(v.map((x) => (x - m) ** 2)) / (v.length - 1));
++};
 +const ratio = (a, b) =>
 +  Number.isFinite(a) && Number.isFinite(b) && b !== 0 ? a / b : null;
 +const effective = (v) => ratio(sum(v) ** 2, sum(v.map((x) => x * x)));

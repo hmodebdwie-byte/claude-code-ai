@@ -1,17 +1,14 @@
-From e4ba220e6fe470fef336a0c459936ffe91524aaf Mon Sep 17 00:00:00 2001
+From 4e4cdaeee095bc6d46514caef33fe050ef9b6e39 Mon Sep 17 00:00:00 2001
 From: TickTrade Workbench <hmodebdwie1@gmail.com>
-Date: Sat, 19 Sep 2026 18:55:35 +0000
+Date: Sat, 19 Sep 2026 21:27:07 +0000
 Subject: [PATCH] feat(creator): add the Creator Platform admin page to the
- round-9 admin
+ round-12 admin
 
-Round 9 contained no creator admin code. Adds CreatorPlatform.jsx/.css and
-registers them in AdminDashboard/index.jsx (import, menuGroups single entry
-gated on creator.view, allMenuItems entry, and the activeTab branch).
-
-Seam is 4 lines; every other round-9 admin change is untouched. The
-creator.view row is seeded with groupId NULL on purpose - admin-menu.service
-treats a NULL groupId menu entry as a top-level single, which matches the
-isSingle:true entry registered here.
+Round 12 contains no creator admin code. Adds CreatorPlatform.jsx/.css and the
+same 4-line registration in AdminDashboard/index.jsx (import, menuGroups single
+entry gated on creator.view, allMenuItems entry, activeTab branch).
+AdminDashboard/index.jsx is byte-identical between round 9 and round 12, so the
+registration applies verbatim and no round-12 admin work is touched.
 ---
  src/Pages/AdminDashboard/CreatorPlatform.css |  484 ++++++++
  src/Pages/AdminDashboard/CreatorPlatform.jsx | 1154 ++++++++++++++++++
