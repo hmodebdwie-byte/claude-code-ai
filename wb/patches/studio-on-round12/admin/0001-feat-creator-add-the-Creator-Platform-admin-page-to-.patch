@@ -1,0 +1,1708 @@
+From 4e4cdaeee095bc6d46514caef33fe050ef9b6e39 Mon Sep 17 00:00:00 2001
+From: TickTrade Workbench <hmodebdwie1@gmail.com>
+Date: Sat, 19 Sep 2026 21:27:07 +0000
+Subject: [PATCH] feat(creator): add the Creator Platform admin page to the
+ round-12 admin
+
+Round 12 contains no creator admin code. Adds CreatorPlatform.jsx/.css and the
+same 4-line registration in AdminDashboard/index.jsx (import, menuGroups single
+entry gated on creator.view, allMenuItems entry, activeTab branch).
+AdminDashboard/index.jsx is byte-identical between round 9 and round 12, so the
+registration applies verbatim and no round-12 admin work is touched.
+---
+ src/Pages/AdminDashboard/CreatorPlatform.css |  484 ++++++++
+ src/Pages/AdminDashboard/CreatorPlatform.jsx | 1154 ++++++++++++++++++
+ src/Pages/AdminDashboard/index.jsx           |    4 +
+ 3 files changed, 1642 insertions(+)
+ create mode 100644 src/Pages/AdminDashboard/CreatorPlatform.css
+ create mode 100644 src/Pages/AdminDashboard/CreatorPlatform.jsx
+
+diff --git a/src/Pages/AdminDashboard/CreatorPlatform.css b/src/Pages/AdminDashboard/CreatorPlatform.css
+new file mode 100644
+index 0000000..aee1be7
+--- /dev/null
++++ b/src/Pages/AdminDashboard/CreatorPlatform.css
+@@ -0,0 +1,484 @@
++.cp-admin {
++  padding: 25px;
++  color: #d9e6f3;
++  background: #080808;
++  border: 1px solid #303030;
++  border-radius: 12px;
++  min-height: 650px;
++  font-family: Inter, system-ui, sans-serif;
++}
++
++.cp-admin * {
++  box-sizing: border-box;
++}
++.cp-admin input,
++.cp-admin select,
++.cp-admin textarea {
++  font: inherit;
++  font-size: 12px;
++  background: #0c0c0c;
++  border: 1px solid #383838;
++  border-radius: 6px;
++  color: #e1eafa;
++  padding: 10px;
++  min-width: 0;
++}
++.cp-admin input:focus-visible,
++.cp-admin select:focus-visible {
++  outline: 2px solid #12d4e8;
++}
++.cp-admin input[type="checkbox"] {
++  accent-color: #00df9a;
++  width: 15px;
++  height: 15px;
++}
++.cp-actions {
++  display: flex;
++  gap: 8px;
++  flex-wrap: wrap;
++  align-items: center;
++}
++.cp-filters {
++  display: flex;
++  align-items: center;
++  gap: 12px;
++  padding: 18px 0;
++}
++.cp-filters input {
++  flex: 1;
++  max-width: 450px;
++}
++.cp-filters small {
++  margin-left: auto;
++  color: #8393aa;
++}
++.cp-admin-grid {
++  display: grid;
++  grid-template-columns: repeat(2, minmax(0, 1fr));
++  gap: 20px;
++  margin-top: 20px;
++}
++.cp-panel {
++  background: #121212;
++  border: 1px solid #303030;
++  border-radius: 9px;
++  padding: 23px;
++  min-width: 0;
++  align-self: start;
++}
++.cp-panel h2 {
++  font-size: 17px;
++  font-weight: 550;
++  margin: 0 0 12px;
++}
++.cp-panel p {
++  font-size: 12px;
++}
++.cp-form {
++  display: flex;
++  flex-direction: column;
++  gap: 15px;
++}
++.cp-form label,
++.cp-dialog label {
++  display: flex;
++  flex-direction: column;
++  gap: 7px;
++  color: #99acc4;
++  font-size: 11px;
++}
++.cp-two {
++  display: grid;
++  grid-template-columns: repeat(2, minmax(0, 1fr));
++  gap: 15px;
++}
++.cp-check {
++  display: flex !important;
++  flex-direction: row !important;
++  align-items: center;
++  gap: 12px !important;
++}
++.cp-grant {
++  margin-top: 20px;
++}
++.cp-grant > button {
++  margin-top: 16px;
++}
++.cp-retention {
++  background: #241521;
++  border: 1px solid #67324b;
++  border-radius: 7px;
++  padding: 15px;
++  margin-top: 20px;
++  display: flex;
++  flex-direction: column;
++  gap: 10px;
++}
++.cp-retention strong {
++  font-size: 12px;
++}
++.cp-retention p {
++  margin: 0;
++}
++.cp-import-preview {
++  border: 1px solid #275147;
++  background: #0c211d;
++  padding: 14px;
++  border-radius: 7px;
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++}
++.cp-import-preview small {
++  color: #8facaa;
++}
++.cp-import-preview code {
++  font-size: 9px;
++  word-break: break-all;
++}
++.cp-admin pre {
++  font-size: 10px;
++  line-height: 1.6;
++  padding: 15px;
++  background: #101010;
++  border: 1px solid #303030;
++  border-radius: 6px;
++  max-height: 250px;
++  overflow: auto;
++  white-space: pre-wrap;
++  overflow-wrap: anywhere;
++}
++.cp-admin summary {
++  cursor: pointer;
++  font-size: 11px;
++  color: #51cfdf;
++  padding: 8px 0;
++}
++.cp-admin dl {
++  font-size: 11px;
++}
++.cp-admin dt {
++  color: #9aacc5;
++  margin: 20px 0 7px;
++}
++.cp-admin dd {
++  margin: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 5px;
++}
++.cp-admin code {
++  font-size: 10px;
++  color: #5bc5d7;
++  overflow-wrap: anywhere;
++}
++.cp-panel dd code {
++  padding: 6px 0;
++  font-size: 11px;
++}
++.cp-dialog input {
++  width: 100%;
++}
++.cp-dialog label {
++  margin: 12px 0;
++}
++.cp-dialog .cp-actions {
++  margin-top: 20px;
++}
++.cp-admin .cp-error {
++  color: #ff85a1;
++  font-size: 12px;
++  background: #2c1621;
++  border: 1px solid #6b3049;
++  border-radius: 6px;
++  padding: 12px;
++}
++.cp-admin .cp-good {
++  color: #00d49b;
++}
++@media (max-width: 1100px) {
++  .cp-admin-grid {
++    grid-template-columns: 1fr;
++  }
++  .cp-admin {
++    padding: 18px;
++  }
++}
++@media (max-width: 700px) {
++  .cp-two {
++    grid-template-columns: 1fr;
++  }
++  .cp-filters {
++    flex-wrap: wrap;
++  }
++  .cp-stats {
++    grid-template-columns: repeat(2, 1fr) !important;
++  }
++  .cp-admin header {
++    align-items: flex-start;
++    flex-direction: column;
++  }
++  .cp-panel {
++    padding: 17px;
++  }
++}
++.cp-admin header {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 20px;
++}
++.cp-eyebrow {
++  font-size: 10px;
++  letter-spacing: 1.7px;
++  color: #63cddf;
++}
++.cp-admin h1 {
++  font-size: 27px;
++  font-weight: 500;
++  margin: 10px 0;
++}
++.cp-admin p {
++  color: #829bb5;
++  font-size: 13px;
++  line-height: 1.65;
++}
++.cp-admin button {
++  font: inherit;
++  font-size: 12px;
++  border-radius: 6px;
++  border: 1px solid #444444;
++  background: #242424;
++  color: #c6ddef;
++  padding: 9px 12px;
++  cursor: pointer;
++}
++.cp-admin button:disabled {
++  opacity: 0.4;
++  cursor: wait;
++}
++.cp-admin button:focus-visible,
++.cp-admin textarea:focus-visible {
++  outline: 2px solid #42d7ef;
++}
++.cp-stats {
++  display: grid;
++  grid-template-columns: repeat(4, 1fr);
++  gap: 15px;
++  margin: 28px 0;
++}
++.cp-stats > div {
++  padding: 20px;
++  background: #202020;
++  border: 1px solid #353535;
++  border-radius: 9px;
++}
++.cp-stats span {
++  display: block;
++  font-size: 11px;
++  color: #8fa9c3;
++}
++.cp-stats strong {
++  font-size: 32px;
++  font-weight: 400;
++  display: block;
++  margin-top: 10px;
++}
++.cp-admin nav {
++  display: flex;
++  gap: 7px;
++  border-bottom: 1px solid #383838;
++  padding-bottom: 14px;
++  flex-wrap: wrap;
++}
++.cp-admin nav button {
++  background: transparent;
++  border-color: transparent;
++}
++.cp-admin nav button.active {
++  background: #164151;
++  color: #76edee;
++  border-color: #286679;
++}
++.cp-note {
++  font-size: 11px;
++  color: #7a94b0;
++  padding: 15px 0;
++  line-height: 1.7;
++}
++.cp-table-wrap {
++  overflow: auto;
++  border: 1px solid #343434;
++  border-radius: 8px;
++}
++.cp-admin table {
++  width: 100%;
++  border-collapse: collapse;
++  text-align: left;
++  font-size: 12px;
++}
++.cp-admin th {
++  font-size: 10px;
++  letter-spacing: 0.6px;
++  text-transform: uppercase;
++  color: #84a1bf;
++  background: #1c1c1c;
++  padding: 14px;
++  white-space: nowrap;
++}
++.cp-admin td {
++  padding: 16px 14px;
++  border-top: 1px solid #343434;
++  vertical-align: middle;
++}
++.cp-admin td small {
++  display: block;
++  color: #7291af;
++  margin-top: 4px;
++  font-size: 10px;
++  max-width: 360px;
++  overflow-wrap: anywhere;
++}
++.cp-good,
++.cp-warn {
++  font-size: 10px;
++  border-radius: 4px;
++  padding: 5px 8px;
++  color: #68dec2;
++  background: #17382f;
++}
++.cp-warn {
++  color: #e3bd7b;
++  background: #382d1e;
++}
++.cp-empty {
++  padding: 30px;
++  text-align: center;
++}
++.cp-error {
++  color: #ff9f92 !important;
++  background: #361f26;
++  padding: 12px;
++  border-radius: 6px;
++}
++.cp-data-status {
++  padding: 20px;
++  background: #222222;
++  border-radius: 9px;
++  margin-bottom: 20px;
++}
++.cp-data-status > span {
++  margin-left: 15px;
++}
++.cp-features {
++  display: grid;
++  grid-template-columns: 1fr 1fr;
++  gap: 20px;
++}
++.cp-features article {
++  padding: 20px;
++  background: #1c1c1c;
++  border: 1px solid #3a3a3a;
++  border-radius: 9px;
++}
++.cp-features h3 {
++  font-size: 18px;
++  font-weight: 500;
++  margin: 10px 0;
++}
++.cp-features code {
++  font-size: 11px;
++  color: #7edbea;
++}
++.cp-features pre {
++  color: #9dbbd3;
++  background: #181818;
++  padding: 14px;
++  border-radius: 6px;
++  font-size: 11px;
++  overflow: auto;
++}
++.cp-dialog-shade {
++  position: fixed;
++  inset: 0;
++  z-index: 2000;
++  background: #000000c9;
++  display: grid;
++  place-items: center;
++  padding: 20px;
++}
++.cp-dialog {
++  width: 100%;
++  max-width: 490px;
++  background: #232323;
++  border: 1px solid #444444;
++  border-radius: 12px;
++  padding: 25px;
++}
++.cp-dialog h2 {
++  font-size: 21px;
++  margin: 0;
++  font-weight: 500;
++}
++.cp-dialog label {
++  display: block;
++  font-size: 12px;
++}
++.cp-dialog textarea {
++  display: block;
++  width: 100%;
++  margin: 10px 0 20px;
++  min-height: 95px;
++  background: #181818;
++  border: 1px solid #444444;
++  color: #d5e7f5;
++  border-radius: 6px;
++  padding: 12px;
++  font: inherit;
++}
++.cp-dialog > div {
++  display: flex;
++  gap: 10px;
++  justify-content: flex-end;
++}
++.cp-admin .cp-primary {
++  background: #45d5e5;
++  color: #202020;
++  border-color: #45d5e5;
++}
++@media (max-width: 750px) {
++  .cp-admin {
++    padding: 14px;
++  }
++  .cp-stats {
++    grid-template-columns: 1fr 1fr;
++    gap: 10px;
++  }
++  .cp-stats > div {
++    padding: 14px;
++  }
++  .cp-features {
++    grid-template-columns: 1fr;
++  }
++  .cp-admin h1 {
++    font-size: 23px;
++  }
++  .cp-admin header {
++    align-items: flex-start;
++  }
++}
++
++.cp-dialog.cp-source-review {
++  max-width: 1000px;
++  width: 90vw;
++}
++.cp-source-review pre {
++  max-height: 65vh;
++  overflow: auto;
++  white-space: pre-wrap;
++  font-size: 12px;
++  line-height: 1.7;
++  background: #090909;
++  padding: 20px;
++  border-radius: 8px;
++}
+diff --git a/src/Pages/AdminDashboard/CreatorPlatform.jsx b/src/Pages/AdminDashboard/CreatorPlatform.jsx
+new file mode 100644
+index 0000000..99e6e51
+--- /dev/null
++++ b/src/Pages/AdminDashboard/CreatorPlatform.jsx
+@@ -0,0 +1,1154 @@
++import { useCallback, useEffect, useState } from "react";
++import axios from "../../utils/axios";
++import { usePermission } from "../../hooks/usePermission";
++import "./CreatorPlatform.css";
++const tabs = [
++  ["packages", "Packages"],
++  ["history", "History & imports"],
++  ["data", "Feature catalog"],
++  ["research", "Research jobs"],
++  ["marketplace", "Publication review"],
++  ["licenses", "Licenses"],
++  ["runs", "Runtime"],
++  ["expert-journal", "Live orders"],
++  ["settings", "Settings"],
++  ["audit", "Audit trail"],
++];
++const fmt = (v) =>
++  v == null
++    ? "—"
++    : Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
++const date = (v) => (v ? new Date(v).toLocaleString() : "—");
++const get = async (p) => (await axios.get(`/admin/creator/${p}`)).data;
++const post = async (p, b) =>
++  (await axios.post(`/admin/creator/${p}`, b, { timeout: 45000 })).data;
++const saveFile = (name, data) => {
++  const url = URL.createObjectURL(
++    new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
++  );
++  const a = document.createElement("a");
++  a.href = url;
++  a.download = name;
++  a.click();
++  setTimeout(() => URL.revokeObjectURL(url), 1000);
++};
++export default function CreatorPlatform() {
++  const canView = usePermission("creator.view"),
++    canManage = usePermission("creator.manage");
++  const [tab, setTab] = useState("history"),
++    [overview, setOverview] = useState(null),
++    [rows, setRows] = useState([]),
++    [data, setData] = useState(null),
++    [settings, setSettings] = useState(null),
++    [error, setError] = useState(""),
++    [notice, setNotice] = useState(""),
++    [loading, setLoading] = useState(false),
++    [target, setTarget] = useState(null),
++    [reason, setReason] = useState(""),
++    [action, setAction] = useState(""),
++    [mode, setMode] = useState("all"),
++    [search, setSearch] = useState("");
++  const [importForm, setImport] = useState({
++      mode: "arena",
++      name: "",
++      symbol: "TICK",
++      format: "json",
++      content: "",
++    }),
++    [preview, setPreview] = useState(null),
++    [retention, setRetention] = useState(null),
++    [confirmation, setConfirmation] = useState(""),
++    [grant, setGrant] = useState({
++      ownerId: "",
++      listingId: "",
++      expiresAt: "",
++      reason: "",
++    }),
++    [tradeId, setTradeId] = useState(""),
++    [sourceReview, setSourceReview] = useState(null);
++  const load = useCallback(async () => {
++    if (!canView) return;
++    setLoading(true);
++    try {
++      const [o, r] = await Promise.all([get("overview"), get(tab)]);
++      setOverview(o);
++      if (tab === "data") setData(r);
++      else if (tab === "settings") setSettings((s) => s || r);
++      else setRows(r);
++    } catch (e) {
++      setError(e.message);
++    } finally {
++      setLoading(false);
++    }
++  }, [tab, canView]);
++  useEffect(() => {
++    setRows([]);
++    setError("");
++    setSearch("");
++    setNotice("");
++    void load();
++    const timer = setInterval(() => {
++      if (tab !== "settings" && !target) void load();
++    }, 12000);
++    return () => clearInterval(timer);
++  }, [load]);
++  useEffect(() => {
++    const key = (e) => {
++      if (e.key === "Escape") {
++        setTarget(null);
++        setSourceReview(null);
++      }
++    };
++    window.addEventListener("keydown", key);
++    return () => window.removeEventListener("keydown", key);
++  }, []);
++  async function task(fn) {
++    setLoading(true);
++    setError("");
++    try {
++      await fn();
++      await load();
++    } catch (e) {
++      setError(e.message);
++    } finally {
++      setLoading(false);
++    }
++  }
++  function ask(row, kind) {
++    setTarget(row);
++    setAction(kind);
++    setReason("");
++    setTradeId("");
++    setConfirmation("");
++  }
++  async function perform() {
++    await task(async () => {
++      if (action === "package")
++        await axios.patch(`/admin/creator/packages/${target.id}`, {
++          disabled: !target.disabled,
++          reason,
++        });
++      if (["published", "rejected", "suspended"].includes(action))
++        await axios.patch(`/admin/creator/marketplace/${target.id}`, {
++          status: action,
++          reason,
++        });
++      if (action === "revoke-license")
++        await post(`licenses/${target.id}/revoke`, { reason });
++      if (action === "stop")
++        await post(`experts/${target.id}/stop`, { reason });
++      if (action === "resolve")
++        await post(`expert-journal/${target.id}/resolve`, {
++          reason,
++          ...(tradeId
++            ? { tradeId: Number(tradeId) }
++            : { confirm: confirmation }),
++        });
++      setTarget(null);
++      setNotice("Action recorded in Creator audit trail.");
++    });
++  }
++  const visible = rows.filter(
++    (r) =>
++      (mode === "all" || r.mode === mode || tab !== "history") &&
++      JSON.stringify(r).toLowerCase().includes(search.toLowerCase()),
++  );
++  if (!canView)
++    return (
++      <div className="cp-admin">You do not have Creator Platform access.</div>
++    );
++  return (
++    <section className="cp-admin">
++      <header>
++        <div>
++          <span className="cp-eyebrow">TICKTRADE / CREATOR INFRASTRUCTURE</span>
++          <h1>One workspace. A complete record.</h1>
++          <p>
++            Operate the historical archive, script runtime, expert permissions
++            and creator marketplace.
++          </p>
++        </div>
++        <div className="cp-actions">
++          <button disabled={loading} onClick={load}>
++            Refresh
++          </button>
++          <button
++            onClick={() =>
++              saveFile(
++                `creator-${tab}.json`,
++                tab === "data" ? data : tab === "settings" ? settings : rows,
++              )
++            }
++          >
++            Export view
++          </button>
++        </div>
++      </header>
++      <div className="cp-stats">
++        {[
++          ["Packages", overview?.packages],
++          ["Active installations", overview?.active],
++          ["Paper experts", overview?.paper],
++          ["Runtime errors", overview?.errors],
++        ].map(([label, v]) => (
++          <div key={label}>
++            <span>{label}</span>
++            <strong>{fmt(v)}</strong>
++          </div>
++        ))}
++      </div>
++      <nav>
++        {tabs.map(([id, label]) => (
++          <button
++            key={id}
++            className={tab === id ? "active" : ""}
++            onClick={() => setTab(id)}
++          >
++            {label}
++          </button>
++        ))}
++      </nav>
++      {error && (
++        <p className="cp-error" role="alert">
++          {error}
++        </p>
++      )}
++      {notice && (
++        <p className="cp-good" role="status">
++          {notice}
++        </p>
++      )}
++      {!["settings", "data"].includes(tab) && (
++        <div className="cp-filters">
++          <input
++            aria-label="Search Creator records"
++            placeholder="Search this view…"
++            value={search}
++            onChange={(e) => setSearch(e.target.value)}
++          />
++          {tab === "history" && (
++            <select
++              aria-label="History market mode"
++              value={mode}
++              onChange={(e) => setMode(e.target.value)}
++            >
++              <option value="all">Arena + Binary</option>
++              <option value="arena">Arena</option>
++              <option value="binary">Binary</option>
++            </select>
++          )}
++          <small>{visible.length} records shown</small>
++        </div>
++      )}
++      {tab === "history" && (
++        <>
++          <div className="cp-table-wrap">
++            <table>
++              <thead>
++                <tr>
++                  <th>Dataset</th>
++                  <th>Mode / type</th>
++                  <th>Observations</th>
++                  <th>First / last</th>
++                  <th>Provenance</th>
++                </tr>
++              </thead>
++              <tbody>
++                {visible.map((r) => (
++                  <tr key={r.id}>
++                    <td>
++                      <strong>{r.name}</strong>
++                      <small>{r.id}</small>
++                    </td>
++                    <td>
++                      {r.mode} / {r.kind}
++                      <small>{r.symbol}</small>
++                    </td>
++                    <td>{fmt(r.coverage?.count)}</td>
++                    <td>
++                      {date(r.coverage?.from)}
++                      <small>{date(r.coverage?.to)}</small>
++                    </td>
++                    <td>
++                      <code>
++                        {r.checksum?.slice(0, 16) || "Continuous capture"}
++                      </code>
++                      <small>{r.metadata?.source || "Validated import"}</small>
++                    </td>
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          </div>
++          <p className="cp-note">
++            Arena capture reads existing price records and adds timestamped
++            feature snapshots. Binary history is stored independently; Binary
++            execution remains unavailable.
++          </p>
++          {canManage && (
++            <div className="cp-admin-grid">
++              <article className="cp-panel">
++                <h2>Capture & retention</h2>
++                <p>
++                  Backfill existing records and continue recording without
++                  changing engine or settlement records.
++                </p>
++                <div className="cp-actions">
++                  <button
++                    disabled={loading}
++                    onClick={() =>
++                      task(async () => {
++                        const r = await post("history/capture", {});
++                        if (r.error) throw Error(r.error);
++                        setNotice(
++                          r.paused
++                            ? "Capture is paused in settings."
++                            : `Capture pass: ${r.captured || 0} records considered; duplicates are ignored.`,
++                        );
++                      })
++                    }
++                  >
++                    Capture / backfill now
++                  </button>
++                  <button
++                    disabled={loading}
++                    onClick={() =>
++                      task(async () =>
++                        setRetention(await get("history/retention")),
++                      )
++                    }
++                  >
++                    Preview archive retention
++                  </button>
++                </div>
++                {retention && (
++                  <div className="cp-retention">
++                    <strong>
++                      {retention.count} archive records older than{" "}
++                      {date(retention.before)}
++                    </strong>
++                    <p>
++                      Retention: {retention.retentionDays} days. This deletes
++                      only the Creator archive; original market records remain.
++                    </p>
++                    <input
++                      aria-label="Confirm archive purge"
++                      placeholder="Type DELETE ARCHIVED HISTORY"
++                      value={confirmation}
++                      onChange={(e) => setConfirmation(e.target.value)}
++                    />
++                    <button
++                      disabled={
++                        loading ||
++                        confirmation !== "DELETE ARCHIVED HISTORY" ||
++                        !retention.count
++                      }
++                      onClick={() =>
++                        task(async () => {
++                          await post("history/purge", {
++                            before: retention.before,
++                            count: retention.count,
++                            confirm: confirmation,
++                          });
++                          setRetention(null);
++                          setConfirmation("");
++                          setNotice("Archived history purged and audited.");
++                        })
++                      }
++                    >
++                      Delete reviewed archive records
++                    </button>
++                  </div>
++                )}
++              </article>
++              <article className="cp-panel">
++                <h2>Import a versioned dataset</h2>
++                <p>
++                  Upload JSON, JSONL, CSV or an HTML data block. Imported
++                  scripts and simulator code are never executed.
++                </p>
++                <div className="cp-form">
++                  <div className="cp-two">
++                    <label>
++                      Market
++                      <select
++                        value={importForm.mode}
++                        onChange={(e) => {
++                          setImport((v) => ({ ...v, mode: e.target.value }));
++                          setPreview(null);
++                        }}
++                      >
++                        <option value="arena">Arena</option>
++                        <option value="binary">Binary</option>
++                      </select>
++                    </label>
++                    <label>
++                      Symbol
++                      <input
++                        value={importForm.symbol}
++                        maxLength="40"
++                        onChange={(e) =>
++                          setImport((v) => ({ ...v, symbol: e.target.value }))
++                        }
++                      />
++                    </label>
++                  </div>
++                  <label>
++                    Dataset name
++                    <input
++                      maxLength="120"
++                      value={importForm.name}
++                      onChange={(e) =>
++                        setImport((v) => ({ ...v, name: e.target.value }))
++                      }
++                    />
++                  </label>
++                  <label>
++                    File
++                    <input
++                      type="file"
++                      accept=".json,.jsonl,.csv,.html"
++                      onChange={async (e) => {
++                        const f = e.target.files[0];
++                        if (!f) return;
++                        if (f.size > 700000) {
++                          setError("Import limit: 700 KB per dataset.");
++                          return;
++                        }
++                        const content = await f.text();
++                        const format = f.name.split(".").pop().toLowerCase();
++                        setImport((v) => ({
++                          ...v,
++                          content,
++                          format,
++                          name: v.name || f.name.replace(/\.[^.]+$/, ""),
++                        }));
++                        setPreview(null);
++                      }}
++                    />
++                  </label>
++                  <div className="cp-actions">
++                    <button
++                      disabled={loading || !importForm.content}
++                      onClick={() =>
++                        task(async () =>
++                          setPreview(
++                            await post("history/import/preview", importForm),
++                          ),
++                        )
++                      }
++                    >
++                      Validate & preview
++                    </button>
++                    <button
++                      disabled={loading || !preview || !importForm.name}
++                      onClick={() =>
++                        task(async () => {
++                          await post("history/import", {
++                            ...importForm,
++                            checksum: preview.checksum,
++                          });
++                          setPreview(null);
++                          setImport((v) => ({ ...v, content: "", name: "" }));
++                          setNotice("New immutable dataset imported.");
++                        })
++                      }
++                    >
++                      Commit reviewed dataset
++                    </button>
++                  </div>
++                  {preview && (
++                    <div className="cp-import-preview">
++                      <strong>{preview.count} validated rows</strong>
++                      <small>
++                        {date(preview.from)} → {date(preview.to)}
++                      </small>
++                      <code>{preview.checksum}</code>
++                      <pre>
++                        {JSON.stringify(preview.preview.slice(0, 3), null, 2)}
++                      </pre>
++                    </div>
++                  )}
++                  <details>
++                    <summary>Supported data contract</summary>
++                    <pre>
++                      {JSON.stringify(
++                        {
++                          schemaVersion: 1,
++                          metadata: { source: "Document source and units" },
++                          rows: [
++                            {
++                              time: "2026-01-01T12:00:00.000Z",
++                              price: 1.2,
++                              roundId: 1,
++                              buyVolume: 10,
++                              sellVolume: 0,
++                              origin: "real",
++                              external: { myScore: 0.5 },
++                            },
++                          ],
++                        },
++                        null,
++                        2,
++                      )}
++                    </pre>
++                    <p>
++                      For HTML, embed this JSON in a script of type
++                      application/json with id ticktrade-dataset. The importer
++                      extracts that data block only.
++                    </p>
++                  </details>
++                </div>
++              </article>
++            </div>
++          )}
++        </>
++      )}
++      {tab === "packages" && (
++        <div className="cp-table-wrap">
++          <table>
++            <thead>
++              <tr>
++                <th>Package</th>
++                <th>Owner</th>
++                <th>Version / hash</th>
++                <th>Kind</th>
++                <th>State</th>
++                <th>Action</th>
++              </tr>
++            </thead>
++            <tbody>
++              {visible.map((r) => (
++                <tr key={r.id}>
++                  <td>
++                    <strong>{r.name}</strong>
++                    <small>{r.id}</small>
++                  </td>
++                  <td>#{r.ownerId}</td>
++                  <td>
++                    v{r.versions?.[0]?.revision}
++                    <small>{r.versions?.[0]?.hash?.slice(0, 16)}</small>
++                  </td>
++                  <td>{r.versions?.[0]?.manifest?.kind}</td>
++                  <td>{r.disabled ? "Disabled" : "Available"}</td>
++                  <td>
++                    {canManage && (
++                      <button onClick={() => ask(r, "package")}>
++                        {r.disabled ? "Restore" : "Disable"}
++                      </button>
++                    )}
++                  </td>
++                </tr>
++              ))}
++            </tbody>
++          </table>
++        </div>
++      )}
++      {tab === "data" && (
++        <>
++          <div className="cp-data-status">
++            <strong>
++              {data?.frame
++                ? `Arena round ${data.frame.roundId}`
++                : "No active Arena round"}
++            </strong>
++            <p>
++              {data?.frame?.source} · {data?.frame?.quality}. Feature access
++              exposes aggregates to scripts, not raw account balances.
++            </p>
++          </div>
++          <div className="cp-features">
++            {data?.features.map((f) => (
++              <article key={f.id}>
++                <span className="cp-eyebrow">{f.category}</span>
++                <h3>{f.label}</h3>
++                <code>{f.id}</code>
++                <p>{f.description}</p>
++                <details>
++                  <summary>Latest feature values</summary>
++                  <pre>
++                    {JSON.stringify(
++                      data.frame?.data?.[f.key] ?? { available: false },
++                      null,
++                      2,
++                    )}
++                  </pre>
++                </details>
++              </article>
++            ))}
++          </div>
++        </>
++      )}
++      {tab === "research" && (
++        <div className="cp-table-wrap">
++          <table>
++            <thead>
++              <tr>
++                <th>Job</th>
++                <th>Owner</th>
++                <th>Study</th>
++                <th>State</th>
++                <th>Progress</th>
++                <th>Diagnostic</th>
++              </tr>
++            </thead>
++            <tbody>
++              {visible.map((r) => (
++                <tr key={r.id}>
++                  <td>
++                    <code>{r.id.slice(0, 12)}</code>
++                    <small>{date(r.createdAt)}</small>
++                  </td>
++                  <td>#{r.ownerId}</td>
++                  <td>{r.kind}</td>
++                  <td>{r.status}</td>
++                  <td>{r.progress}%</td>
++                  <td>{r.error || "—"}</td>
++                </tr>
++              ))}
++            </tbody>
++          </table>
++        </div>
++      )}
++      {tab === "marketplace" && (
++        <div className="cp-table-wrap">
++          <table>
++            <thead>
++              <tr>
++                <th>Listing</th>
++                <th>Creator</th>
++                <th>License / price</th>
++                <th>Source</th>
++                <th>State</th>
++                <th>Review actions</th>
++              </tr>
++            </thead>
++            <tbody>
++              {visible.map((r) => (
++                <tr key={r.id}>
++                  <td>
++                    <strong>{r.title}</strong>
++                    <small>{r.summary}</small>
++                    <code>{r.versionId}</code>
++                  </td>
++                  <td>#{r.ownerId}</td>
++                  <td>
++                    {r.license}
++                    <small>
++                      {fmt(r.priceCents / 100)} {r.currency}
++                    </small>
++                  </td>
++                  <td>{r.sourceVisibility}</td>
++                  <td>
++                    {r.status}
++                    <small>{r.reviewReason}</small>
++                  </td>
++                  <td>
++                    {canManage && (
++                      <div className="cp-actions">
++                        <button
++                          disabled={loading}
++                          onClick={() =>
++                            task(async () =>
++                              setSourceReview(
++                                await get(`marketplace/${r.id}/source`),
++                              ),
++                            )
++                          }
++                        >
++                          Inspect source
++                        </button>
++                        <button
++                          disabled={loading}
++                          onClick={() => ask(r, "published")}
++                        >
++                          Approve
++                        </button>
++                        <button
++                          disabled={loading}
++                          onClick={() => ask(r, "rejected")}
++                        >
++                          Reject
++                        </button>
++                        <button
++                          disabled={loading}
++                          onClick={() => ask(r, "suspended")}
++                        >
++                          Suspend listing
++                        </button>
++                      </div>
++                    )}
++                  </td>
++                </tr>
++              ))}
++            </tbody>
++          </table>
++          <p className="cp-note">
++            Publication approval pins a saved version. Paid publication
++            additionally requires a configured provider and eligible seller
++            payout account. Suspending a listing prevents new purchases; revoke
++            a license or package to stop existing access.
++          </p>
++        </div>
++      )}
++      {tab === "licenses" && (
++        <>
++          <div className="cp-table-wrap">
++            <table>
++              <thead>
++                <tr>
++                  <th>License</th>
++                  <th>User</th>
++                  <th>Listing / version</th>
++                  <th>Source</th>
++                  <th>Expiry</th>
++                  <th>State / action</th>
++                </tr>
++              </thead>
++              <tbody>
++                {visible.map((r) => (
++                  <tr key={r.id}>
++                    <td>
++                      <code>{r.id.slice(0, 12)}</code>
++                    </td>
++                    <td>#{r.ownerId}</td>
++                    <td>
++                      <small>{r.listingId}</small>
++                      <small>{r.versionId}</small>
++                    </td>
++                    <td>{r.source}</td>
++                    <td>{r.expiresAt ? date(r.expiresAt) : "Perpetual"}</td>
++                    <td>
++                      {r.status}{" "}
++                      {canManage && r.status === "active" && (
++                        <button onClick={() => ask(r, "revoke-license")}>
++                          Revoke
++                        </button>
++                      )}
++                    </td>
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          </div>
++          {canManage && (
++            <article className="cp-panel cp-grant">
++              <h2>Grant access with an audit reason</h2>
++              <div className="cp-form cp-two">
++                <label>
++                  User ID
++                  <input
++                    type="number"
++                    min="1"
++                    value={grant.ownerId}
++                    onChange={(e) =>
++                      setGrant((v) => ({ ...v, ownerId: e.target.value }))
++                    }
++                  />
++                </label>
++                <label>
++                  Listing UUID
++                  <input
++                    value={grant.listingId}
++                    onChange={(e) =>
++                      setGrant((v) => ({ ...v, listingId: e.target.value }))
++                    }
++                  />
++                </label>
++                <label>
++                  Expires (optional)
++                  <input
++                    type="datetime-local"
++                    value={grant.expiresAt}
++                    onChange={(e) =>
++                      setGrant((v) => ({ ...v, expiresAt: e.target.value }))
++                    }
++                  />
++                </label>
++                <label>
++                  Reason
++                  <input
++                    maxLength="500"
++                    value={grant.reason}
++                    onChange={(e) =>
++                      setGrant((v) => ({ ...v, reason: e.target.value }))
++                    }
++                  />
++                </label>
++              </div>
++              <button
++                disabled={
++                  loading ||
++                  !grant.ownerId ||
++                  !grant.listingId ||
++                  grant.reason.length < 5
++                }
++                onClick={() =>
++                  task(async () => {
++                    await post("licenses", {
++                      ...grant,
++                      ownerId: Number(grant.ownerId),
++                      expiresAt: grant.expiresAt
++                        ? new Date(grant.expiresAt).toISOString()
++                        : undefined,
++                    });
++                    setNotice("License granted; no payment was recorded.");
++                  })
++                }
++              >
++                Grant license
++              </button>
++            </article>
++          )}
++        </>
++      )}
++      {tab === "runs" && (
++        <>
++          <div className="cp-data-status">
++            <strong>
++              Runner · {overview?.runner?.running ? "executing" : "idle"}
++            </strong>
++            <p>
++              {overview?.runner?.queued || 0} queued ·{" "}
++              {overview?.runner?.completed || 0} completed ·{" "}
++              {overview?.runner?.failed || 0} failed evaluations. Installations
++              keep chart history across round changes.
++            </p>
++          </div>
++          <div className="cp-table-wrap">
++            <table>
++              <thead>
++                <tr>
++                  <th>Package</th>
++                  <th>Owner</th>
++                  <th>Mode</th>
++                  <th>State / warmup</th>
++                  <th>Budget</th>
++                  <th>Limits / diagnostic</th>
++                  <th />
++                </tr>
++              </thead>
++              <tbody>
++                {visible.map((r) => (
++                  <tr key={r.id}>
++                    <td>
++                      {r.version?.manifest?.name}
++                      <small>{r.id}</small>
++                    </td>
++                    <td>#{r.ownerId}</td>
++                    <td>{r.executionMode}</td>
++                    <td>
++                      {r.status}
++                      <small>
++                        {r.warmupStatus} · {r.warmupInfo?.calculated || 0}{" "}
++                        historical frames
++                      </small>
++                    </td>
++                    <td>
++                      {fmt(r.spent)} / {fmt(r.budget)}
++                    </td>
++                    <td>
++                      Max {fmt(r.maxStake)} · {r.minIntervalSec}s
++                      <small>{r.error || "—"}</small>
++                    </td>
++                    <td>
++                      {canManage && r.enabled && (
++                        <button onClick={() => ask(r, "stop")}>Stop run</button>
++                      )}
++                    </td>
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          </div>
++        </>
++      )}
++      {tab === "expert-journal" && (
++        <>
++          <p className="cp-note">
++            Unacknowledged dispatches stay reserved and require reconciliation.
++            These controls never change original wallet or settlement records.
++          </p>
++          <div className="cp-table-wrap">
++            <table>
++              <thead>
++                <tr>
++                  <th>Time / round</th>
++                  <th>Installation / command</th>
++                  <th>Order</th>
++                  <th>State</th>
++                  <th>Trade / payout</th>
++                  <th>Evidence</th>
++                  <th />
++                </tr>
++              </thead>
++              <tbody>
++                {visible.map((r) => (
++                  <tr key={r.id}>
++                    <td>
++                      {date(r.time)}
++                      <small>Round {r.roundId}</small>
++                    </td>
++                    <td>
++                      <small>{r.installationId}</small>
++                      <code>{r.commandId || "Not dispatched"}</code>
++                    </td>
++                    <td>
++                      {r.side} {fmt(r.amount)}
++                    </td>
++                    <td>{r.status}</td>
++                    <td>
++                      {r.tradeId || "—"} / {fmt(r.payout)}
++                    </td>
++                    <td>{r.response?.message || r.reason}</td>
++                    <td>
++                      {canManage && r.status === "needs-review" && (
++                        <button onClick={() => ask(r, "resolve")}>
++                          Reconcile
++                        </button>
++                      )}
++                    </td>
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          </div>
++        </>
++      )}
++      {tab === "settings" && settings && (
++        <div className="cp-admin-grid">
++          <article className="cp-panel">
++            <h2>Creator platform settings</h2>
++            <div className="cp-form">
++              {[
++                ["captureEnabled", "Record and backfill market history"],
++                ["liveExpertsEnabled", "Permit live expert activation"],
++                ["marketplaceEnabled", "Enable new marketplace checkouts"],
++                ["aiEnabled", "Enable server-side AI authoring"],
++              ].map(([key, label]) => (
++                <label className="cp-check" key={key}>
++                  <input
++                    type="checkbox"
++                    disabled={!canManage}
++                    checked={!!settings[key]}
++                    onChange={(e) =>
++                      setSettings((s) => ({ ...s, [key]: e.target.checked }))
++                    }
++                  />
++                  {label}
++                </label>
++              ))}
++              {[
++                ["retentionDays", "Archive retention (days)", 1, 3650],
++                [
++                  "backfillBatch",
++                  "Source records per backfill pass",
++                  100,
++                  10000,
++                ],
++                [
++                  "maxImportRows",
++                  "Maximum rows per imported dataset",
++                  100,
++                  10000,
++                ],
++              ].map(([key, label, min, max]) => (
++                <label key={key}>
++                  {label}
++                  <input
++                    disabled={!canManage}
++                    type="number"
++                    min={min}
++                    max={max}
++                    value={settings[key]}
++                    onChange={(e) =>
++                      setSettings((s) => ({
++                        ...s,
++                        [key]: Number(e.target.value),
++                      }))
++                    }
++                  />
++                </label>
++              ))}
++              <button
++                disabled={!canManage || loading}
++                onClick={() =>
++                  task(async () => {
++                    const r = await axios.patch(
++                      "/admin/creator/settings",
++                      settings,
++                    );
++                    setSettings(r.data);
++                    setNotice("Creator settings saved.");
++                  })
++                }
++              >
++                Save settings
++              </button>
++            </div>
++          </article>
++          <article className="cp-panel">
++            <h2>Server configuration</h2>
++            <p>
++              Secrets belong in the server environment, outside uploaded source
++              and browser settings.
++            </p>
++            <dl>
++              <dt>Live expert master switch</dt>
++              <dd>
++                <code>CREATOR_LIVE_TRADING_ENABLED=true</code>
++              </dd>
++              <dt>Creator checkout + signed webhook</dt>
++              <dd>
++                <code>CREATOR_STRIPE_SECRET_KEY</code>
++                <code>CREATOR_STRIPE_WEBHOOK_SECRET</code>
++                <code>CREATOR_PUBLIC_URL</code>
++              </dd>
++              <dt>Optional AI authoring</dt>
++              <dd>
++                <code>CREATOR_ANTHROPIC_API_KEY</code>
++                <code>CREATOR_AI_MODEL</code>
++              </dd>
++              <dt>Marketplace platform fee</dt>
++              <dd>
++                <code>CREATOR_MARKET_FEE_BPS</code>
++              </dd>
++            </dl>
++            <p>
++              Binary trading stays design-only. Imported Binary history is
++              available for research. Retention deletion requires a reviewed
++              preview and explicit confirmation.
++            </p>
++          </article>
++        </div>
++      )}
++      {tab === "audit" && (
++        <div className="cp-table-wrap">
++          <table>
++            <thead>
++              <tr>
++                <th>Time</th>
++                <th>Actor</th>
++                <th>Action</th>
++                <th>Target</th>
++                <th>Detail</th>
++              </tr>
++            </thead>
++            <tbody>
++              {visible.map((r) => (
++                <tr key={r.id}>
++                  <td>{date(r.createdAt)}</td>
++                  <td>#{r.actorId}</td>
++                  <td>{r.action}</td>
++                  <td>
++                    <small>{r.targetId}</small>
++                  </td>
++                  <td>
++                    <small>{JSON.stringify(r.detail)}</small>
++                  </td>
++                </tr>
++              ))}
++            </tbody>
++          </table>
++        </div>
++      )}
++      {sourceReview && (
++        <div className="cp-dialog-shade">
++          <section
++            className="cp-dialog cp-source-review"
++            role="dialog"
++            aria-modal="true"
++            aria-label="Publication source review"
++          >
++            <h2>{sourceReview.listing.title}</h2>
++            <p>
++              Immutable version {sourceReview.version.revision} · source access
++              is audited.
++            </p>
++            <code>{sourceReview.version.hash}</code>
++            <pre>{sourceReview.version.source}</pre>
++            <button autoFocus onClick={() => setSourceReview(null)}>
++              Close source review
++            </button>
++          </section>
++        </div>
++      )}
++      {target && (
++        <div className="cp-dialog-shade">
++          <section
++            className="cp-dialog"
++            role="dialog"
++            aria-modal="true"
++            aria-label="Review admin action"
++          >
++            <h2>
++              {action === "package"
++                ? target.disabled
++                  ? "Restore package"
++                  : "Disable package"
++                : action === "resolve"
++                  ? "Reconcile uncertain execution"
++                  : action.replaceAll("-", " ")}
++            </h2>
++            <p>{target.name || target.title || target.id}</p>
++            {action === "resolve" && (
++              <>
++                <p>
++                  Link a verified existing trade, or explicitly attest that no
++                  trade executed. The outbox will not retry the original
++                  command.
++                </p>
++                <label>
++                  Verified trade ID (if executed)
++                  <input
++                    type="number"
++                    min="1"
++                    value={tradeId}
++                    onChange={(e) => setTradeId(e.target.value)}
++                  />
++                </label>
++                {!tradeId && (
++                  <label>
++                    No trade executed
++                    <input
++                      placeholder="Type NO TRADE EXECUTED"
++                      value={confirmation}
++                      onChange={(e) => setConfirmation(e.target.value)}
++                    />
++                  </label>
++                )}
++              </>
++            )}
++            <label>
++              Audit reason
++              <textarea
++                autoFocus
++                minLength={action === "resolve" ? 10 : 5}
++                maxLength="500"
++                rows="4"
++                value={reason}
++                onChange={(e) => setReason(e.target.value)}
++              />
++            </label>
++            <div className="cp-actions">
++              <button onClick={() => setTarget(null)}>Cancel</button>
++              <button
++                disabled={
++                  loading ||
++                  reason.trim().length < (action === "resolve" ? 10 : 5) ||
++                  (action === "resolve" &&
++                    !tradeId &&
++                    confirmation !== "NO TRADE EXECUTED")
++                }
++                onClick={perform}
++              >
++                Confirm action
++              </button>
++            </div>
++            {error && <p className="cp-error">{error}</p>}
++          </section>
++        </div>
++      )}
++    </section>
++  );
++}
+diff --git a/src/Pages/AdminDashboard/index.jsx b/src/Pages/AdminDashboard/index.jsx
+index bc5c115..d5a5b4a 100644
+--- a/src/Pages/AdminDashboard/index.jsx
++++ b/src/Pages/AdminDashboard/index.jsx
+@@ -60,6 +60,7 @@ import Reconciliation from "./Reconciliation";
+ import MarketingHub from "./marketing/MarketingHub";
+ import SecurityHub from "./security/SecurityHub";
+ import OpsHub from "./ops/OpsHub";
++import CreatorPlatform from "./CreatorPlatform";
+ import OpsSwitchBanner from "./ops/OpsSwitchBanner";
+ import { readWinnerFilters, winnerListUrl } from "./roundWinnersModel";
+ 
+@@ -379,6 +380,7 @@ const AdminDashboard = () => {
+   // hasPermission/visibleMenuGroups filtering below keeps working unchanged —
+   // keys match the PermissionDefinition rows in the DB 1:1.
+   const menuGroups = [
++    { id: "creator-platform", title: "Creator Platform", icon: "📐", isSingle: true, tabId: "creator-platform", permissionKey: "creator.view" },
+     {
+       id: "dashboard",
+       isSingle: true,
+@@ -525,6 +527,7 @@ const AdminDashboard = () => {
+   };
+ 
+   const allMenuItems = [
++    { id: "creator-platform", name: "Creator Platform", icon: "📐" },
+     { id: "dashboard", name: "Dashboard", icon: "📈" },
+     ...menuGroups.filter(g => !g.isSingle).flatMap(group => group.items || [])
+   ];
+@@ -1202,6 +1205,7 @@ const AdminDashboard = () => {
+           )}
+ 
+ 
++          {activeTab === "creator-platform" && <CreatorPlatform />}
+           {activeTab === "topRoundWinners" && <TopRoundWinners />}
+           {activeTab === "npcPayoutInspector" && (
+             <NpcPayoutInspector
+-- 
+2.43.0
+

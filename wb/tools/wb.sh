@@ -123,11 +123,15 @@ cmd_build() {
       && pnpm --filter @ticktrade/platform-core build && pnpm --filter @ticktrade/npc-intelligence build \
       && pnpm --filter api build) || die "backend build failed"
   fi
+  # env/backend.env sets NODE_ENV=development for the API. If it is exported when
+  # vite runs, `import.meta.env.PROD` is false and the build silently drops the
+  # PWA registration (no service worker, no precache, no "Update now" prompt) -
+  # it still exits 0, so nothing tells you. Unset it for the web builds.
   if [[ "$what" == all || "$what" == frontend ]]; then
-    log "frontend: vite build"; (cd "$FRONTEND" && npm run build) || die "frontend build failed"
+    log "frontend: vite build"; (cd "$FRONTEND" && env -u NODE_ENV npm run build) || die "frontend build failed"
   fi
   if [[ "$what" == all || "$what" == admin ]]; then
-    log "admin: vite build"; (cd "$ADMIN" && npm run build) || die "admin build failed"
+    log "admin: vite build"; (cd "$ADMIN" && env -u NODE_ENV npm run build) || die "admin build failed"
   fi
   date -u +%FT%TZ > "$RUN/last-build.txt"
 }
@@ -162,15 +166,38 @@ svc_cmd() {  # prints: cwd|command
     *) return 1;;
   esac
 }
-svc_pid() { local f="$RUN/pids/$1.pid"; [ -f "$f" ] && kill -0 "$(cat "$f")" 2>/dev/null && cat "$f"; }
+# The PID file holds the service's OWN pid (svc_start has the started shell write
+# $$ and then exec, so the pid survives the exec). `setsid` forks, so the old
+# `echo $!` recorded the setsid wrapper, which exits immediately - stop/restart
+# then silently did nothing and left the real process running on the port.
+# Also confirm the pid is still the service we started: pids get recycled, and a
+# stale file must never make `wb stop` kill an unrelated process.
+svc_pid() {
+  local f="$RUN/pids/$1.pid" pid
+  [ -f "$f" ] || return 1
+  pid="$(cat "$f" 2>/dev/null)" || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qx "WB_SERVICE=$1" || return 1
+  printf '%s' "$pid"
+}
 svc_start() {
   local s="$1" spec cwd cmd
   spec="$(svc_cmd "$s")" || die "unknown service $s"
   cwd="${spec%%|*}"; cmd="${spec#*|}"
   if svc_pid "$s" >/dev/null; then log "$s already running (pid $(svc_pid "$s"))"; return; fi
-  ( cd "$cwd" && envload && export PORT="$API_PORT" && \
-    nohup setsid bash -c "exec $cmd" >> "$RUN/logs/$s.log" 2>&1 & echo $! > "$RUN/pids/$s.pid" )
-  log "started $s (pid $(cat "$RUN/pids/$s.pid")) -> $RUN/logs/$s.log"
+  rm -f "$RUN/pids/$s.pid"
+  # The subshell points its OWN stdin/stdout/stderr at the log before it forks
+  # anything, so no descendant can hold the caller's stdout. Without this,
+  # `wb start api | tail` hung forever: the service inherited the pipe's write
+  # end and tail never saw EOF, even though the service only wrote to its log.
+  # The started shell records its own pid and then execs, so the pid file holds
+  # the real service pid and not the setsid wrapper's - that is what made
+  # `wb stop` and `wb restart` silently do nothing.
+  ( exec </dev/null >>"$RUN/logs/$s.log" 2>&1
+    cd "$cwd" && envload && export PORT="$API_PORT" && export WB_SERVICE="$s" && \
+      setsid bash -c "echo \$\$ > '$RUN/pids/$s.pid'; exec $cmd" & )
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$RUN/pids/$s.pid" ] && break; sleep 0.2; done
+  log "started $s (pid $(cat "$RUN/pids/$s.pid" 2>/dev/null || echo '?')) -> $RUN/logs/$s.log"
 }
 svc_stop() {
   local s="$1" pid
