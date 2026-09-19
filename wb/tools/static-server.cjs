@@ -26,11 +26,17 @@ http.createServer((req, res) => {
   try { pathname = decodeURIComponent(new URL(req.url, "http://local").pathname); } catch { res.writeHead(400); return res.end(); }
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
-  if (pathname === "/sw.js") {
+  // The stub exists so a rebuilt preview is never served from a stale precache.
+  // It also means the PWA itself cannot be verified here: it deletes every
+  // workbox precache and fetches network-only, so offline boot and the
+  // update prompt are untestable. WB_REAL_SW=1 serves the real built sw.js
+  // instead, which is what the PWA acceptance run needs.
+  if (pathname === "/sw.js" && process.env.WB_REAL_SW !== "1") {
     res.setHeader("Content-Type", "text/javascript; charset=utf-8");
     res.setHeader("Service-Worker-Allowed", "/");
     return res.end(req.method === "HEAD" ? undefined : NETWORK_ONLY_WORKER);
   }
+  if (pathname === "/sw.js") res.setHeader("Service-Worker-Allowed", "/");
   if (pathname === "/__wb/health") { res.setHeader("Content-Type", "application/json"); return res.end(JSON.stringify({ ok: true, root, port })); }
   let file = path.resolve(root, "." + pathname);
   if (!file.startsWith(root + path.sep) && file !== root) { res.writeHead(403); return res.end(); }
