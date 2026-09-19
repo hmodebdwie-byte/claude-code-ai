@@ -1,0 +1,1232 @@
+{
+ "summary": {
+  "minutes": 30,
+  "samples": 120,
+  "rssStartMiB": 483,
+  "rssEndMiB": 492,
+  "rssMaxMiB": 493,
+  "rssGrowthMiB": 9,
+  "feedOk": 120,
+  "feedFail": 0,
+  "feedMs": {
+   "min": 31,
+   "median": 39,
+   "p95": 48,
+   "max": 58
+  },
+  "roundsObserved": [
+   27,
+   28,
+   29,
+   30,
+   31,
+   32
+  ],
+  "roundTransitions": 5,
+  "installsStart": 8,
+  "installsEnd": 8,
+  "minEnabledSeen": 8
+ },
+ "samples": [
+  {
+   "t": 0,
+   "rss": 483,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 34,
+   "statuses": "running"
+  },
+  {
+   "t": 15,
+   "rss": 483,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 46,
+   "statuses": "stale"
+  },
+  {
+   "t": 30,
+   "rss": 483,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 33,
+   "statuses": "running"
+  },
+  {
+   "t": 45,
+   "rss": 483,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 33,
+   "statuses": "running"
+  },
+  {
+   "t": 60,
+   "rss": 483,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 34,
+   "statuses": "stale"
+  },
+  {
+   "t": 75,
+   "rss": 483,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 31,
+   "statuses": "running"
+  },
+  {
+   "t": 90,
+   "rss": 483,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 33,
+   "statuses": "running"
+  },
+  {
+   "t": 105,
+   "rss": 483,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 35,
+   "statuses": "running"
+  },
+  {
+   "t": 120,
+   "rss": 483,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 33,
+   "statuses": "stale"
+  },
+  {
+   "t": 135,
+   "rss": 483,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 35,
+   "statuses": "running"
+  },
+  {
+   "t": 150,
+   "rss": 484,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 34,
+   "statuses": "running"
+  },
+  {
+   "t": 165,
+   "rss": 484,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 32,
+   "statuses": "running"
+  },
+  {
+   "t": 180,
+   "rss": 484,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 33,
+   "statuses": "running"
+  },
+  {
+   "t": 195,
+   "rss": 484,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 34,
+   "statuses": "running"
+  },
+  {
+   "t": 210,
+   "rss": 485,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 34,
+   "statuses": "running"
+  },
+  {
+   "t": 225,
+   "rss": 485,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 33,
+   "statuses": "running"
+  },
+  {
+   "t": 240,
+   "rss": 485,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 27,
+   "feedMs": 33,
+   "statuses": "stale"
+  },
+  {
+   "t": 255,
+   "rss": 485,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 27,
+   "feedMs": 35,
+   "statuses": "stale"
+  },
+  {
+   "t": 270,
+   "rss": 486,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 27,
+   "feedMs": 35,
+   "statuses": "waiting"
+  },
+  {
+   "t": 285,
+   "rss": 486,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 27,
+   "feedMs": 51,
+   "statuses": "waiting"
+  },
+  {
+   "t": 300,
+   "rss": 486,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 37,
+   "statuses": "running"
+  },
+  {
+   "t": 315,
+   "rss": 486,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 38,
+   "statuses": "stale"
+  },
+  {
+   "t": 330,
+   "rss": 486,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 36,
+   "statuses": "running"
+  },
+  {
+   "t": 345,
+   "rss": 486,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 35,
+   "statuses": "running"
+  },
+  {
+   "t": 360,
+   "rss": 486,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 35,
+   "statuses": "stale"
+  },
+  {
+   "t": 375,
+   "rss": 486,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 28,
+   "feedMs": 38,
+   "statuses": "stale"
+  },
+  {
+   "t": 390,
+   "rss": 486,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 35,
+   "statuses": "stale"
+  },
+  {
+   "t": 405,
+   "rss": 485,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 28,
+   "feedMs": 34,
+   "statuses": "stale"
+  },
+  {
+   "t": 420,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 36,
+   "statuses": "stale"
+  },
+  {
+   "t": 435,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 28,
+   "feedMs": 34,
+   "statuses": "stale"
+  },
+  {
+   "t": 450,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 28,
+   "feedMs": 39,
+   "statuses": "stale"
+  },
+  {
+   "t": 465,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 34,
+   "statuses": "running"
+  },
+  {
+   "t": 480,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 35,
+   "statuses": "running"
+  },
+  {
+   "t": 495,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 37,
+   "statuses": "stale"
+  },
+  {
+   "t": 510,
+   "rss": 487,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 35,
+   "statuses": "stale"
+  },
+  {
+   "t": 525,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 35,
+   "statuses": "running"
+  },
+  {
+   "t": 540,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 34,
+   "statuses": "stale"
+  },
+  {
+   "t": 555,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 34,
+   "statuses": "running"
+  },
+  {
+   "t": 570,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 38,
+   "statuses": "running"
+  },
+  {
+   "t": 585,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 37,
+   "statuses": "running"
+  },
+  {
+   "t": 600,
+   "rss": 486,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 28,
+   "feedMs": 37,
+   "statuses": "waiting"
+  },
+  {
+   "t": 615,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 28,
+   "feedMs": 38,
+   "statuses": "waiting"
+  },
+  {
+   "t": 630,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 28,
+   "feedMs": 39,
+   "statuses": "stale"
+  },
+  {
+   "t": 645,
+   "rss": 486,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 40,
+   "statuses": "stale"
+  },
+  {
+   "t": 660,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 39,
+   "statuses": "running"
+  },
+  {
+   "t": 675,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 36,
+   "statuses": "running"
+  },
+  {
+   "t": 690,
+   "rss": 487,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 39,
+   "statuses": "stale"
+  },
+  {
+   "t": 705,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 29,
+   "feedMs": 37,
+   "statuses": "stale"
+  },
+  {
+   "t": 720,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 39,
+   "statuses": "running"
+  },
+  {
+   "t": 735,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 36,
+   "statuses": "running"
+  },
+  {
+   "t": 750,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 37,
+   "statuses": "running"
+  },
+  {
+   "t": 765,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 38,
+   "statuses": "stale"
+  },
+  {
+   "t": 780,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 36,
+   "statuses": "running"
+  },
+  {
+   "t": 795,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 39,
+   "statuses": "stale"
+  },
+  {
+   "t": 810,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 38,
+   "statuses": "running"
+  },
+  {
+   "t": 825,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 38,
+   "statuses": "running"
+  },
+  {
+   "t": 840,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 38,
+   "statuses": "running"
+  },
+  {
+   "t": 855,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 36,
+   "statuses": "running"
+  },
+  {
+   "t": 870,
+   "rss": 487,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 42,
+   "statuses": "running"
+  },
+  {
+   "t": 885,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 38,
+   "statuses": "stale"
+  },
+  {
+   "t": 900,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 41,
+   "statuses": "stale"
+  },
+  {
+   "t": 915,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 40,
+   "statuses": "running"
+  },
+  {
+   "t": 930,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 29,
+   "feedMs": 39,
+   "statuses": "waiting"
+  },
+  {
+   "t": 945,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 29,
+   "feedMs": 58,
+   "statuses": "waiting"
+  },
+  {
+   "t": 960,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 35,
+   "statuses": "running"
+  },
+  {
+   "t": 975,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 42,
+   "statuses": "running"
+  },
+  {
+   "t": 990,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 39,
+   "statuses": "stale"
+  },
+  {
+   "t": 1005,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 39,
+   "statuses": "running"
+  },
+  {
+   "t": 1020,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 43,
+   "statuses": "stale"
+  },
+  {
+   "t": 1035,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 39,
+   "statuses": "running"
+  },
+  {
+   "t": 1050,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 39,
+   "statuses": "running"
+  },
+  {
+   "t": 1065,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 39,
+   "statuses": "stale"
+  },
+  {
+   "t": 1080,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 41,
+   "statuses": "stale"
+  },
+  {
+   "t": 1095,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 40,
+   "statuses": "running"
+  },
+  {
+   "t": 1110,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 41,
+   "statuses": "stale"
+  },
+  {
+   "t": 1125,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 45,
+   "statuses": "running"
+  },
+  {
+   "t": 1140,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 39,
+   "statuses": "running"
+  },
+  {
+   "t": 1155,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 44,
+   "statuses": "running"
+  },
+  {
+   "t": 1170,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 41,
+   "statuses": "running"
+  },
+  {
+   "t": 1185,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 40,
+   "statuses": "running"
+  },
+  {
+   "t": 1200,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 41,
+   "statuses": "running"
+  },
+  {
+   "t": 1215,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 42,
+   "statuses": "stale"
+  },
+  {
+   "t": 1230,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 42,
+   "statuses": "running"
+  },
+  {
+   "t": 1245,
+   "rss": 487,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 44,
+   "statuses": "running"
+  },
+  {
+   "t": 1260,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 30,
+   "feedMs": 44,
+   "statuses": "waiting"
+  },
+  {
+   "t": 1275,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 30,
+   "feedMs": 56,
+   "statuses": "waiting"
+  },
+  {
+   "t": 1290,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 42,
+   "statuses": "running"
+  },
+  {
+   "t": 1305,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 40,
+   "statuses": "running"
+  },
+  {
+   "t": 1320,
+   "rss": 488,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 42,
+   "statuses": "running"
+  },
+  {
+   "t": 1335,
+   "rss": 489,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 43,
+   "statuses": "running"
+  },
+  {
+   "t": 1350,
+   "rss": 492,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 43,
+   "statuses": "running"
+  },
+  {
+   "t": 1365,
+   "rss": 492,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 41,
+   "statuses": "running"
+  },
+  {
+   "t": 1380,
+   "rss": 492,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 41,
+   "statuses": "stale"
+  },
+  {
+   "t": 1395,
+   "rss": 492,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 44,
+   "statuses": "running"
+  },
+  {
+   "t": 1410,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 43,
+   "statuses": "running"
+  },
+  {
+   "t": 1425,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 41,
+   "statuses": "running"
+  },
+  {
+   "t": 1440,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 42,
+   "statuses": "running"
+  },
+  {
+   "t": 1455,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 45,
+   "statuses": "stale"
+  },
+  {
+   "t": 1470,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 42,
+   "statuses": "running"
+  },
+  {
+   "t": 1485,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 42,
+   "statuses": "running"
+  },
+  {
+   "t": 1500,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 43,
+   "statuses": "running"
+  },
+  {
+   "t": 1515,
+   "rss": 492,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 45,
+   "statuses": "running"
+  },
+  {
+   "t": 1530,
+   "rss": 492,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 45,
+   "statuses": "running"
+  },
+  {
+   "t": 1545,
+   "rss": 492,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 45,
+   "statuses": "running"
+  },
+  {
+   "t": 1560,
+   "rss": 492,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 48,
+   "statuses": "running"
+  },
+  {
+   "t": 1575,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 31,
+   "feedMs": 47,
+   "statuses": "stale"
+  },
+  {
+   "t": 1590,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 31,
+   "feedMs": 46,
+   "statuses": "waiting"
+  },
+  {
+   "t": 1605,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 31,
+   "feedMs": 47,
+   "statuses": "waiting"
+  },
+  {
+   "t": 1620,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 32,
+   "feedMs": 47,
+   "statuses": "running"
+  },
+  {
+   "t": 1635,
+   "rss": 493,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 32,
+   "feedMs": 49,
+   "statuses": "running"
+  },
+  {
+   "t": 1650,
+   "rss": 492,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 32,
+   "feedMs": 45,
+   "statuses": "running"
+  },
+  {
+   "t": 1665,
+   "rss": 490,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 32,
+   "feedMs": 45,
+   "statuses": "stale"
+  },
+  {
+   "t": 1680,
+   "rss": 493,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 32,
+   "feedMs": 48,
+   "statuses": "running"
+  },
+  {
+   "t": 1695,
+   "rss": 493,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 32,
+   "feedMs": 46,
+   "statuses": "running"
+  },
+  {
+   "t": 1710,
+   "rss": 493,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 32,
+   "feedMs": 45,
+   "statuses": "stale"
+  },
+  {
+   "t": 1725,
+   "rss": 493,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 32,
+   "feedMs": 44,
+   "statuses": "stale"
+  },
+  {
+   "t": 1740,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 32,
+   "feedMs": 48,
+   "statuses": "stale"
+  },
+  {
+   "t": 1755,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 0,
+   "round": 32,
+   "feedMs": 58,
+   "statuses": "stale"
+  },
+  {
+   "t": 1770,
+   "rss": 491,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 32,
+   "feedMs": 45,
+   "statuses": "running"
+  },
+  {
+   "t": 1785,
+   "rss": 492,
+   "installs": 8,
+   "enabled": 8,
+   "fresh": 8,
+   "round": 32,
+   "feedMs": 45,
+   "statuses": "running"
+  }
+ ]
+}

@@ -106,12 +106,16 @@ frontend/admin) with the trading engine producing real rounds.
 | One card per page, desktop + real phone touch swipe | **11/11** with 8 indicators |
 | Eight-indicator load (real browser) | **9/9** |
 | Round transition | rounds 26 → 27, all 8 recovered |
+| **Endurance, 30 min with 8 indicators** | **120/120 feed polls OK, 0 failures** |
 
 ### Measured
 - Eight indicators: feed **29/30/36 ms** at 357 KiB, two-rAF turnaround **31 ms**,
   JS heap **15 → 16 MiB** over 15 s of live ticks
 - DataBank cold build over 400 traders / 4,800 accepted orders: **~0.9 s**, 388 KiB;
   cached repeat **~11 ms**; profile switching **3 / 4 / 10 ms**
+- Endurance, 30 min / 8 indicators: RSS **483 → 492 MiB** (+9), feed **120/120 OK**,
+  latency **31 / 39 / 48 / 58 ms** (min/median/p95/max), **5 round transitions**,
+  8 indicators enabled throughout
 - PWA: 13 workbox precache entries + 23 runtime, offline shell boots, a new build
   puts a worker in `waiting` so the update prompt fires
 - `/creator/*` unauthenticated returns **401, not 404**
@@ -167,9 +171,12 @@ serves the real one).
   your PWA configuration. Offline boot and the update prompt both work as configured.
 - **Live expert execution is untested beyond the refusal path.** Live is disabled by
   server config here, so the gate is verified, not live execution.
-- **Endurance:** a 30-minute run with 8 indicators was in progress at delivery; the
-  longest fully-observed window is ~8 minutes across a real round transition. Multi-hour
-  stability is still unverified.
+- **Endurance is now measured, not pending.** A 30-minute run with 8 active indicators
+  completed: 120 samples, **RSS 483 → 492 MiB (max 493, +9 MiB over 30 minutes)**, feed
+  **120/120 OK with 0 failures** at min/median/p95/max **31 / 39 / 48 / 58 ms**, rounds
+  27 → 32 across **5 round transitions**, and installations never dropped below 8
+  enabled. No leak and no degradation over the window. **Multi-hour stability is still
+  unverified** — 30 minutes is the longest run.
 - **DataBank load used synthetic stakes.** The engine produced real rounds and real NPC
   trades, but `stakes` was 0, so the DataBank honestly reported 0 profiles. To load-test
   it I seeded 400 synthetic traders and 19,200 stakes into the isolated local database,
